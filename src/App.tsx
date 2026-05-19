@@ -1627,6 +1627,7 @@ export default function App() {
             const appRole = import.meta.env.VITE_APP_ROLE || 'staff';
             const roles = (['Siswa', 'Guru', 'Admin'] as const).filter(r => {
               if (appRole === 'student') return r === 'Siswa';
+              if (appRole === 'teacher') return r === 'Siswa' || r === 'Guru';
               return true;
             });
 
