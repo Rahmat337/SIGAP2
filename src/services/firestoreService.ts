@@ -86,6 +86,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'students', data.nisn), data);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `students/${data.nisn}`);
+      throw e;
     }
   },
 
@@ -94,6 +95,7 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'students', nisn));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `students/${nisn}`);
+      throw e;
     }
   },
 
@@ -104,6 +106,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'teachers', data.nip), data);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `teachers/${data.nip}`);
+      throw e;
     }
   },
 
@@ -112,6 +115,7 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'teachers', nip));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `teachers/${nip}`);
+      throw e;
     }
   },
 
@@ -121,6 +125,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'classrooms', data.nama), data);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `classrooms/${data.nama}`);
+      throw e;
     }
   },
 
@@ -129,6 +134,7 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'classrooms', nama));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `classrooms/${nama}`);
+      throw e;
     }
   },
 
@@ -139,6 +145,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'attendance', id), { ...data, id });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `attendance/${data.id}`);
+      throw e;
     }
   },
 
@@ -147,6 +154,7 @@ export const firestoreService = {
       await updateDoc(doc(db, 'attendance', id), { status, keterangan: ket || '' });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `attendance/${id}`);
+      throw e;
     }
   },
 
@@ -155,6 +163,7 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'attendance', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `attendance/${id}`);
+      throw e;
     }
   },
 
@@ -354,6 +363,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'teachingSchedules', id), { ...data, id });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `teachingSchedules/${data.id}`);
+      throw e;
     }
   },
 
@@ -362,6 +372,7 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'teachingSchedules', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `teachingSchedules/${id}`);
+      throw e;
     }
   },
 
@@ -408,6 +419,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'settings', hari), { hari, masuk, pulang });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `settings/${hari}`);
+      throw e;
     }
   },
 
@@ -416,6 +428,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'holidays', tanggal), { tanggal, keterangan });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `holidays/${tanggal}`);
+      throw e;
     }
   },
 
@@ -424,6 +437,7 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'holidays', tanggal));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `holidays/${tanggal}`);
+      throw e;
     }
   },
   saveAppConfig: async (data: any) => {
@@ -431,6 +445,7 @@ export const firestoreService = {
       await setDoc(doc(db, 'appConfig', 'general'), data, { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'appConfig/general');
+      throw e;
     }
   },
 

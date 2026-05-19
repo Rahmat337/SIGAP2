@@ -169,20 +169,25 @@ export default function App() {
     rekapMapel: 0
   });
   const [pageSize, setPageSize] = useState(10);
-  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
+  const getLocalISO = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const [currentDate, setCurrentDate] = useState(getLocalISO);
 
   // Timer to ensure "Today" updates if page is left open overnight
   useEffect(() => {
     const timer = setInterval(() => {
-      const live = new Date().toISOString().split('T')[0];
+      const live = getLocalISO();
       if (live !== currentDate) setCurrentDate(live);
-    }, 60000); // Check every minute
+    }, 30000); // Check every 30 seconds
     return () => clearInterval(timer);
   }, [currentDate]);
 
   const [rekapMapelFilter, setRekapMapelFilter] = useState({
     nip: '',
-    tanggal: new Date().toISOString().split('T')[0],
+    tanggal: getLocalISO(),
     mapel: ''
   });
 
@@ -243,42 +248,41 @@ export default function App() {
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'appConfig/general'));
 
-    // One-time fetch for less dynamic data to save quota
-    const fetchData = async () => {
-      try {
-        const studentsSnap = await getDocs(collection(db, 'students'));
-        setStudents(studentsSnap.docs.map(d => ({ nisn: d.id, ...d.data() } as Student)));
+    // Real-time sync for other entities
+    const unsubStudents = onSnapshot(collection(db, 'students'), (snap) => {
+      setStudents(snap.docs.map(d => ({ nisn: d.id, ...d.data() } as Student)));
+    });
 
-        const teachersSnap = await getDocs(collection(db, 'teachers'));
-        setTeachers(teachersSnap.docs.map(d => ({ nip: d.id, ...d.data() } as Teacher)));
+    const unsubTeachers = onSnapshot(collection(db, 'teachers'), (snap) => {
+      setTeachers(snap.docs.map(d => ({ nip: d.id, ...d.data() } as Teacher)));
+    });
 
-        const classroomsSnap = await getDocs(collection(db, 'classrooms'));
-        setClassrooms(classroomsSnap.docs.map(d => d.data() as Classroom));
+    const unsubClassrooms = onSnapshot(collection(db, 'classrooms'), (snap) => {
+      setClassrooms(snap.docs.map(d => d.data() as Classroom));
+    });
 
-        const settingsSnap = await getDocs(collection(db, 'settings'));
-        setSettings(settingsSnap.docs.map(d => d.data() as DaySetting));
+    const unsubSettings = onSnapshot(collection(db, 'settings'), (snap) => {
+      setSettings(snap.docs.map(d => d.data() as DaySetting));
+    });
 
-        const holidaysSnap = await getDocs(collection(db, 'holidays'));
-        setHolidays(holidaysSnap.docs.map(d => d.data() as Holiday));
+    const unsubHolidays = onSnapshot(collection(db, 'holidays'), (snap) => {
+      setHolidays(snap.docs.map(d => d.data() as Holiday));
+    });
 
-        const schedulesSnap = await getDocs(collection(db, 'teachingSchedules'));
-        setTeachingSchedules(schedulesSnap.docs.map(d => d.data() as TeachingSchedule));
-        
-        setQuotaExceeded(false);
-      } catch (error: any) {
-        console.error('Error fetching static data:', error);
-        if (error.message?.includes('Quota') || error.code === 'resource-exhausted') {
-          setQuotaExceeded(true);
-        }
-      }
-    };
-
-    fetchData();
+    const unsubSchedules = onSnapshot(collection(db, 'teachingSchedules'), (snap) => {
+      setTeachingSchedules(snap.docs.map(d => d.data() as TeachingSchedule));
+    });
 
     return () => {
       unsubAttendance();
       unsubTeacherAttendance();
       unsubAppConfig();
+      unsubStudents();
+      unsubTeachers();
+      unsubClassrooms();
+      unsubSettings();
+      unsubHolidays();
+      unsubSchedules();
     };
   }, [firebaseConnected]);
 
@@ -1440,7 +1444,7 @@ export default function App() {
     }
   };
 
-  const defaultLogo = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_Kementerian_Agama.png/600px-Logo_Kementerian_Agama.png";
+  const defaultLogo = "/logo.png";
   const fallbackLogo = "https://www.kemenag.go.id/assets/images/logo-kemenag.png";
 
   const appLogo = useMemo(() => {
@@ -2978,7 +2982,7 @@ export default function App() {
                     <Upload size={14} /> Import
                   </button>
                   <button 
-                    onClick={() => { setEditingSiswa({ nisn: '', nama: '', tempat: '', tgl: '', kelas: '', ayah: '', ibu: '', hp: '' }); setShowSiswaModal(true); }} 
+                    onClick={() => { setEditingSiswa({ nisn: '', nama: '', jenisKelamin: 'L', tempat: '', tgl: '', kelas: '', ayah: '', ibu: '', hp: '' }); setShowSiswaModal(true); }} 
                     className="bg-green-800 text-white px-4 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase flex items-center gap-2 hover:bg-green-700 transition-all shadow-sm"
                   >
                     <Plus size={14} /> Tambah
@@ -3357,7 +3361,7 @@ export default function App() {
                     <Upload size={14} /> Import
                   </button>
                   <button 
-                    onClick={() => { setEditingGuru({ nip: '', nama: '', kelas: '', user: '', pass: '' }); setShowGuruModal(true); }} 
+                    onClick={() => { setEditingGuru({ nip: '', nama: '', jabatan: 'Guru', kelas: '', user: '', pass: '', role: 'Guru' }); setShowGuruModal(true); }} 
                     className="bg-zinc-900 text-white px-4 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-sm"
                   >
                     <Plus size={14} /> Tambah
@@ -4485,7 +4489,7 @@ export default function App() {
                               <input 
                                 type="time" 
                                 defaultValue={s.masuk} 
-                                disabled={s.hari === 'Minggu' || !!holiday}
+                                disabled={s.hari === 'Minggu'}
                                 onBlur={async (e) => { await firestoreService.savePengaturanHari(s.hari, e.target.value, s.pulang); }}
                                 className="bg-white border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-30" 
                               />
@@ -4495,7 +4499,7 @@ export default function App() {
                               <input 
                                 type="time" 
                                 defaultValue={s.pulang} 
-                                disabled={s.hari === 'Minggu' || !!holiday}
+                                disabled={s.hari === 'Minggu'}
                                 onBlur={async (e) => { await firestoreService.savePengaturanHari(s.hari, s.masuk, e.target.value); }}
                                 className="bg-white border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-30" 
                               />
@@ -4594,15 +4598,18 @@ export default function App() {
                             <img 
                               src={appLogo} 
                               alt="Preview" 
-                              crossOrigin="anonymous"
                               className="w-full h-full object-contain relative z-10" 
                               onError={(e) => {
                                 console.error("[DEBUG] Logo load error (Settings Preview):", e.currentTarget.src);
-                                e.currentTarget.style.opacity = '0';
-                                const parent = e.currentTarget.parentElement;
-                                if (parent) {
-                                  const icon = parent.querySelector('.fallback-icon');
-                                  if (icon) (icon as HTMLElement).style.opacity = '1';
+                                if (e.currentTarget.src !== fallbackLogo && !e.currentTarget.src.includes('/logo.png')) {
+                                  e.currentTarget.src = fallbackLogo;
+                                } else {
+                                  e.currentTarget.style.opacity = '0';
+                                  const parent = e.currentTarget.parentElement;
+                                  if (parent) {
+                                    const icon = parent.querySelector('.fallback-icon');
+                                    if (icon) (icon as HTMLElement).style.opacity = '1';
+                                  }
                                 }
                               }}
                             />
