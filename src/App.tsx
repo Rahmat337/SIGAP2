@@ -62,13 +62,15 @@ const formatIndoDate = (dateStr: string) => {
   }
 };
 
-const countDaysInMonth = (year: number, month: number, dayName: string, holidays: Holiday[]) => {
+const countDaysInMonth = (year: number, month: number, dayName: string, holidays: Holiday[], upToDay?: number) => {
   const dayIndex = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"].indexOf(dayName);
   if (dayIndex === -1) return 0;
   
   let count = 0;
   let date = new Date(year, month, 1);
-  while (date.getMonth() === month) {
+  const lastDay = upToDay || new Date(year, month + 1, 0).getDate();
+  
+  while (date.getMonth() === month && date.getDate() <= lastDay) {
     if (date.getDay() === dayIndex) {
       // Manual formatting YYYY-MM-DD in local time to match holiday data precisely
       const y = date.getFullYear();
@@ -84,6 +86,31 @@ const countDaysInMonth = (year: number, month: number, dayName: string, holidays
     date.setDate(date.getDate() + 1);
   }
   return count;
+};
+
+const getEffectiveDays = (year: number, month: number, holidays: Holiday[], settings: DaySetting[], upToDay?: number) => {
+  const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const days: string[] = [];
+  const lastDay = upToDay || new Date(year, month + 1, 0).getDate();
+  
+  for (let d = 1; d <= lastDay; d++) {
+    const date = new Date(year, month, d);
+    const dayName = dayNames[date.getDay()];
+    
+    // 1. Skip Sunday
+    if (dayName === "Minggu") continue;
+    
+    // 2. Skip Holidays
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (holidays.some(h => h.tanggal === dateStr)) continue;
+    
+    // 3. Skip if day setting is "Libur" (empty masuk or pulang)
+    const setting = settings.find(s => s.hari === dayName);
+    if (setting && (!setting.masuk || !setting.pulang)) continue;
+    
+    days.push(dateStr);
+  }
+  return days;
 };
 
 const AttendanceChart = ({ data }: { data: any[] }) => (
@@ -147,6 +174,11 @@ export default function App() {
 
   const [analysisClass, setAnalysisClass] = useState('');
   const [appLogoInput, setAppLogoInput] = useState('');
+
+  const effectiveDaysThisMonth = useMemo(() => {
+    const now = new Date();
+    return getEffectiveDays(now.getFullYear(), now.getMonth(), holidays, settings, now.getDate());
+  }, [holidays, settings]);
 
   const DEFAULT_SUBJECTS = useMemo(() => [
     'Fiqih', "Alqur'an Hadis", 'Akida Akhlak', 'SKI', 'Bhs. Indonesia', 
@@ -1343,7 +1375,11 @@ export default function App() {
           const sakit = monthAttendance.filter(a => a.status === 'Sakit').length;
           const alfa = monthAttendance.filter(a => a.status === 'Alfa').length;
           const totalLambat = monthAttendance.reduce((sum, a) => sum + (a.terlambat || 0), 0);
-          const perc = Math.round(((hadir + izin + sakit) / 25) * 100);
+          const [y, m] = rekapFilter.bulan.split('-').map(Number);
+          const now = new Date();
+          const limit = (now.getFullYear() === y && (now.getMonth() + 1) === m) ? now.getDate() : undefined;
+          const effCount = getEffectiveDays(y, m - 1, holidays, settings, limit).length;
+          const perc = effCount > 0 ? Math.round(((hadir + izin + sakit) / effCount) * 100) : 0;
           return {
             "Nama Siswa": s.nama,
             "Kelas": s.kelas,
@@ -1404,7 +1440,11 @@ export default function App() {
           const sk = m.filter(a => a.status === 'Sakit').length;
           const f = m.filter(a => a.status === 'Alfa').length;
           const lbt = m.reduce((sum, a) => sum + (a.terlambat || 0), 0);
-          const p = Math.round(((h + i + sk) / 25) * 100);
+          const [y, mm] = rekapFilter.bulan.split('-').map(Number);
+          const now = new Date();
+          const limit = (now.getFullYear() === y && (now.getMonth() + 1) === mm) ? now.getDate() : undefined;
+          const effCount = getEffectiveDays(y, mm - 1, holidays, settings, limit).length;
+          const p = effCount > 0 ? Math.round(((h + i + sk) / effCount) * 100) : 0;
           return [s.nama, s.kelas, h, i, sk, f, lbt, `${p}%`];
         })
       : teachers
@@ -1744,10 +1784,11 @@ export default function App() {
       return a.nisn === session?.uid && aMonth === month && aYear === year;
     });
     
-    if (currentMonthAbsen.length === 0) return 0;
-    const hadir = currentMonthAbsen.filter(a => a.status === 'Hadir').length;
-    return Math.round((hadir / currentMonthAbsen.length) * 100);
-  }, [attendance, session]);
+    if (currentMonthAbsen.length === 0 && effectiveDaysThisMonth.length === 0) return 0;
+    const hadir = currentMonthAbsen.filter(a => a.status === 'Hadir' || a.status === 'Izin' || a.status === 'Sakit').length;
+    const effCount = effectiveDaysThisMonth.length;
+    return effCount > 0 ? Math.round((hadir / effCount) * 100) : 0;
+  }, [attendance, session, effectiveDaysThisMonth]);
 
   const menuItems = useMemo(() => {
     if (!session) return [];
@@ -3229,8 +3270,9 @@ export default function App() {
                             const currentMonthPrefix = currentDate.slice(0, 7);
                             const classAttendance = (attendance || []).filter(a => a.kelas === c.nama && a.tanggal.startsWith(currentMonthPrefix));
                             const totalSiswa = (students || []).filter(s => s.kelas === c.nama).length;
-                            const daysInMonth = 25; 
-                            const totalPeluang = totalSiswa * daysInMonth;
+                            
+                            const daysPassed = effectiveDaysThisMonth.length;
+                            const totalPeluang = totalSiswa * daysPassed;
                             const hadirCount = classAttendance.filter(a => a.status === 'Hadir' || a.status === 'Izin' || a.status === 'Sakit').length;
                             return {
                               name: c.nama || 'Kelas',
@@ -3249,24 +3291,44 @@ export default function App() {
                       )}
                    </div>
                    <div className="mt-6">
-                      <h4 className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-3">Siswa Kehadiran &lt; 80% (Bulan Ini)</h4>
+                      <h4 className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-3">Siswa Kehadiran &lt; 80% ({new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })})</h4>
                       <div className="max-h-48 overflow-y-auto space-y-2">
-                        {(students || []).filter(s => analysisClass ? s.kelas === analysisClass : true).map(s => {
-                          const currentMonth = new Date().toISOString().slice(0, 7);
-                          const studentAttendance = (attendance || []).filter(a => a.nisn === s.nisn && a.tanggal.startsWith(currentMonth));
-                          const totalDays = 25; 
-                          const hadir = studentAttendance.filter(a => ['Hadir', 'Izin', 'Sakit'].includes(a.status)).length;
-                          const perc = totalDays > 0 ? (hadir / totalDays) * 100 : 0;
-                          if (perc < 80 && studentAttendance.length > 0) {
-                            return (
-                              <div key={s.nisn} className="flex justify-between items-center p-2 bg-red-50 rounded-lg border border-red-100">
-                                <span className="text-xs font-bold">{s.nama} ({s.kelas})</span>
-                                <span className="text-xs font-black text-red-600">{Math.round(perc)}%</span>
-                              </div>
-                            );
-                          }
-                          return null;
-                        })}
+                        {(() => {
+                           const daysCount = effectiveDaysThisMonth.length;
+                           if (daysCount === 0) return (
+                             <div className="text-center py-4 text-gray-400 text-[10px] font-bold uppercase italic">Belum ada hari sekolah bulan ini</div>
+                           );
+
+                           const filteredStudents = (students || []).filter(s => analysisClass ? s.kelas === analysisClass : true);
+                           const lowAttendanceSiswa = filteredStudents.filter(s => {
+                             const currentMonthString = new Date().toISOString().slice(0, 7);
+                             const studentAttendance = (attendance || []).filter(a => a.nisn === s.nisn && a.tanggal.startsWith(currentMonthString));
+                             const hadir = studentAttendance.filter(a => ['Hadir', 'Izin', 'Sakit'].includes(a.status)).length;
+                             const perc = (hadir / daysCount) * 100;
+                             return perc < 80;
+                           });
+
+                           if (lowAttendanceSiswa.length === 0) return (
+                             <div className="text-center py-4 text-gray-400 text-[10px] font-bold uppercase italic">Semua siswa tertib presensi ✨</div>
+                           );
+
+                           return lowAttendanceSiswa.map(s => {
+                             const currentMonthString = new Date().toISOString().slice(0, 7);
+                             const studentAttendance = (attendance || []).filter(a => a.nisn === s.nisn && a.tanggal.startsWith(currentMonthString));
+                             const hadir = studentAttendance.filter(a => ['Hadir', 'Izin', 'Sakit'].includes(a.status)).length;
+                             const perc = Math.round((hadir / daysCount) * 100);
+                             
+                             return (
+                               <div key={s.nisn} className="flex justify-between items-center p-2 bg-red-50 rounded-lg border border-red-100">
+                                 <div className="flex flex-col">
+                                   <span className="text-xs font-bold">{s.nama}</span>
+                                   <span className="text-[10px] font-medium text-gray-500">{s.kelas} • {hadir} dari {daysCount} hari sekolah</span>
+                                 </div>
+                                 <span className="text-xs font-black text-red-600">{perc}%</span>
+                               </div>
+                             );
+                           });
+                        })()}
                       </div>
                    </div>
                 </div>
@@ -3321,8 +3383,8 @@ export default function App() {
                           const year = now.getFullYear();
                           const month = now.getMonth();
                           const totalTarget = (schedules || []).reduce((sum, s) => {
-                            const occ = countDaysInMonth(year, month, s.hari, holidays);
-                            return sum + (occ * (Number(s.targetPertemuan) || 0));
+                            const occ = countDaysInMonth(year, month, s.hari, holidays, now.getDate());
+                            return sum + (occ * (Number(s.targetPertemuan) || 1));
                           }, 0);
                           const currentMonth = now.toISOString().slice(0, 7);
                           const actual = (teacherAttendance || []).filter(ta => ta.nip === t.nip && (analysisClass ? ta.kelas === analysisClass : true) && ta.tanggal.startsWith(currentMonth)).length;
@@ -4522,8 +4584,11 @@ export default function App() {
                             const izin = monthAttendance.filter(a => a.status === 'Izin').length;
                             const sakit = monthAttendance.filter(a => a.status === 'Sakit').length;
                             const alfa = monthAttendance.filter(a => a.status === 'Alfa').length;
-                            const total = hadir + izin + sakit + alfa;
-                            const perc = total > 0 ? Math.round(((hadir + izin + sakit) / 25) * 100) : 0; // Using 25 as denominator for realistic percentage
+                            const [y, m] = rekapFilter.bulan.split('-').map(Number);
+                            const now = new Date();
+                            const limit = (now.getFullYear() === y && (now.getMonth() + 1) === m) ? now.getDate() : undefined;
+                            const effCount = getEffectiveDays(y, m - 1, holidays, settings, limit).length;
+                            const perc = effCount > 0 ? Math.round(((hadir + izin + sakit) / effCount) * 100) : 0;
                             
                             return (
                               <tr key={i} className="hover:bg-gray-50 transition-colors">
