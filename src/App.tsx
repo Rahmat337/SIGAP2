@@ -175,6 +175,13 @@ export default function App() {
   const [analysisClass, setAnalysisClass] = useState('');
   const [appLogoInput, setAppLogoInput] = useState('');
 
+  // Force analysisClass for Wali Kelas
+  useEffect(() => {
+    if (activePanel === 'analisis' && session?.role === 'Guru' && session?.isWali && session?.kelas) {
+      setAnalysisClass(session.kelas);
+    }
+  }, [activePanel, session]);
+
   const effectiveDaysThisMonth = useMemo(() => {
     const now = new Date();
     return getEffectiveDays(now.getFullYear(), now.getMonth(), holidays, settings, now.getDate());
@@ -3249,20 +3256,30 @@ export default function App() {
                     >
                       {[10, 20, 50, 100].map(v => <option key={v} value={v}>Tampil {v}</option>)}
                     </select>
-                    <select 
-                      value={analysisClass} 
-                      onChange={e => setAnalysisClass(e.target.value)}
-                      className="bg-zinc-50 border-0 rounded-xl px-4 py-2 font-bold text-sm"
-                    >
-                      <option value="">Semua Kelas</option>
-                      {(classrooms || []).map(c => <option key={c.nama} value={c.nama}>{c.nama}</option>)}
-                    </select>
+                    <div className="relative flex items-center gap-2">
+                       {session?.role === 'Guru' && session?.isWali && (
+                         <span className="absolute -top-3 right-0 bg-red-100 text-red-600 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest border border-red-200">Terkunci</span>
+                       )}
+                       <select 
+                         value={analysisClass} 
+                         onChange={e => setAnalysisClass(e.target.value)}
+                         disabled={session?.role === 'Guru' && session?.isWali}
+                         className="bg-zinc-50 border-0 rounded-xl px-4 py-2 font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed min-w-[120px]"
+                       >
+                         {!(session?.role === 'Guru' && session?.isWali) && <option value="">Semua Kelas</option>}
+                         {(classrooms || [])
+                           .filter(c => (session?.role === 'Guru' && session?.isWali) ? c.nama === session?.kelas : true)
+                           .map(c => <option key={c.nama} value={c.nama}>{c.nama}</option>)}
+                       </select>
+                    </div>
                   </div>
                 </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Siswa Attendance Analysis */}
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 min-h-[400px]">
-                   <h3 className="text-sm font-black text-green-900 uppercase tracking-widest mb-6">Analisis Kehadiran Siswa Per Kelas</h3>
+                   <h3 className="text-sm font-black text-green-900 uppercase tracking-widest mb-6">
+                     {session?.role === 'Guru' && session?.isWali ? `Analisis Kehadiran Siswa Kelas ${session.kelas}` : 'Analisis Kehadiran Siswa Per Kelas'}
+                   </h3>
                    <div className="h-64 relative">
                       {classrooms.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
@@ -3335,7 +3352,9 @@ export default function App() {
 
                 {/* Teacher Attendance Analysis */}
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 min-h-[400px]">
-                   <h3 className="text-sm font-black text-blue-900 uppercase tracking-widest mb-6">Analisis Kehadiran Guru</h3>
+                   <h3 className="text-sm font-black text-blue-900 uppercase tracking-widest mb-6">
+                     {session?.role === 'Guru' && session?.isWali ? `Analisis Kehadiran Guru Pengajar di ${session.kelas}` : 'Analisis Kehadiran Guru'}
+                   </h3>
                    <div className="h-64 relative">
                       {teachers.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
@@ -3371,7 +3390,9 @@ export default function App() {
                       )}
                    </div>
                    <div className="mt-6">
-                      <h4 className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-3">Guru Performa &lt; 50% (Bulan Ini)</h4>
+                      <h4 className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-3">
+                         {session?.role === 'Guru' && session?.isWali ? `Performa Guru di ${session.kelas} < 50%` : 'Guru Performa < 50% (Bulan Ini)'}
+                       </h4>
                       <div className="max-h-48 overflow-y-auto space-y-2">
                         {(teachers || []).filter(t => {
                            if (!analysisClass) return true;
