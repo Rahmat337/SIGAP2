@@ -73,9 +73,9 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    // Production static file serving
-    console.log("[Server] Running in PRODUCTION mode");
+  } else if (!process.env.VERCEL) {
+    // Production static file serving (ONLY for non-Vercel environments like Cloud Run)
+    console.log("[Server] Running in PRODUCTION mode (Non-Vercel)");
     
     // In production (Cloud Run), files are typically in /workspace/dist because of the build script
     let distPath = path.resolve(process.cwd(), "dist");
@@ -116,8 +116,8 @@ async function startServer() {
     });
   }
 
-  // Only listen if not running on Vercel as a function
-  if (!process.env.VERCEL) {
+  // Only listen if not running on Vercel or other serverless environments
+  if (!process.env.VERCEL && !process.env.SERVERLESS) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
@@ -126,6 +126,10 @@ async function startServer() {
   return app;
 }
 
+// Export the app directly for Vercel, or the promise if needed
 const appPromise = startServer();
 
-export default appPromise;
+export default async (req: express.Request, res: express.Response) => {
+  const app = await appPromise;
+  return app(req, res);
+};
