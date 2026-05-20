@@ -26,9 +26,30 @@ export interface FirestoreErrorInfo {
   }
 }
 
+type QuotaListener = (isExceeded: boolean) => void;
+let globalQuotaListener: QuotaListener | null = null;
+
+export function onQuotaExceeded(listener: QuotaListener) {
+  globalQuotaListener = listener;
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  
+  const isQuota = errMessage.toLowerCase().includes('quota exceeded') || 
+                  errMessage.toLowerCase().includes('quota limit exceeded') ||
+                  errMessage.toLowerCase().includes('quota-exceeded');
+
+  if (isQuota && globalQuotaListener) {
+    try {
+      globalQuotaListener(true);
+    } catch (e) {
+      console.error("Error invoking quota listener:", e);
+    }
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,

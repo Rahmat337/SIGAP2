@@ -12,6 +12,7 @@ export interface UserSession {
   uid: string;
   kelas: string;
   isWali: boolean;
+  jabatan?: string;
   message?: string;
   roleBackup?: Role;
 }

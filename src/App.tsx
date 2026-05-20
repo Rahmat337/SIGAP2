@@ -33,7 +33,7 @@ import {
 } from './types';
 import { auth, db } from './firebase';
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, where, getDocs } from 'firebase/firestore';
-import { handleFirestoreError, OperationType } from './lib/firebaseUtils';
+import { handleFirestoreError, OperationType, onQuotaExceeded } from './lib/firebaseUtils';
 
 const formatIndoDate = (dateStr: string) => {
   if (!dateStr) return '-';
@@ -196,6 +196,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [firebaseConnected, setFirebaseConnected] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [dismissQuotaNotice, setDismissQuotaNotice] = useState(false);
 
   const [filterClassAbsensi, setFilterClassAbsensi] = useState('');
   const [filterNamaAbsensi, setFilterNamaAbsensi] = useState('');
@@ -237,6 +238,10 @@ export default function App() {
   const [confirmModal, setConfirmModal] = useState<{ show: boolean, title: string, message: string, entityName?: string, onConfirm: () => void } | null>(null);
 
   useEffect(() => {
+    onQuotaExceeded((isExceeded) => {
+      setQuotaExceeded(isExceeded);
+    });
+
     const initApp = async () => {
       setLoading(true);
       try {
@@ -252,37 +257,9 @@ export default function App() {
     initApp();
   }, []);
 
+  // Load general configuration as long as database is connected (needed for login page branding)
   useEffect(() => {
     if (!firebaseConnected) return;
-
-    // Real-time synchronization for critical data
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const dateLimit = thirtyDaysAgo.toISOString().split('T')[0];
-
-    const unsubAttendance = onSnapshot(
-      query(
-        collection(db, 'attendance'), 
-        where('tanggal', '>=', dateLimit),
-        orderBy('tanggal', 'desc')
-      ), 
-      (snap) => {
-        setAttendance(snap.docs.map(d => d.data() as Attendance));
-      }, 
-      (error) => handleFirestoreError(error, OperationType.GET, 'attendance')
-    );
-
-    const unsubTeacherAttendance = onSnapshot(
-      query(
-        collection(db, 'teacherAttendance'), 
-        where('tanggal', '>=', dateLimit),
-        orderBy('tanggal', 'desc')
-      ), 
-      (snap) => {
-        setTeacherAttendance(snap.docs.map(d => d.data() as TeacherAttendance));
-      }, 
-      (error) => handleFirestoreError(error, OperationType.GET, 'teacherAttendance')
-    );
 
     const unsubAppConfig = onSnapshot(doc(db, 'appConfig', 'general'), (snap) => {
       if (snap.exists()) {
@@ -291,39 +268,281 @@ export default function App() {
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'appConfig/general'));
 
-    // Real-time sync for other entities
-    const unsubStudents = onSnapshot(collection(db, 'students'), (snap) => {
-      const data = snap.docs.map(d => ({ nisn: d.id, ...d.data() } as Student));
-      setStudents(data.sort((a, b) => a.nama.localeCompare(b.nama)));
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'students'));
+    return () => {
+      unsubAppConfig();
+    };
+  }, [firebaseConnected]);
 
-    const unsubTeachers = onSnapshot(collection(db, 'teachers'), (snap) => {
-      const data = snap.docs.map(d => ({ nip: d.id, ...d.data() } as Teacher));
-      setTeachers(data.sort((a, b) => a.nama.localeCompare(b.nama)));
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'teachers'));
+  // Load transaction and master data ONLY when a user session is active (logged in)
+  useEffect(() => {
+    if (!firebaseConnected || !session) {
+      // Clear data states when logged out to avoid stale/previous user data and stop memory/network consumption
+      setAttendance([]);
+      setTeacherAttendance([]);
+      setStudents([]);
+      setTeachers([]);
+      setClassrooms([]);
+      setSettings([]);
+      setHolidays([]);
+      setTeachingSchedules([]);
+      return;
+    }
 
-    const unsubClassrooms = onSnapshot(collection(db, 'classrooms'), (snap) => {
-      const data = snap.docs.map(d => d.data() as Classroom);
-      setClassrooms(data.sort((a, b) => a.nama.localeCompare(b.nama)));
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'classrooms'));
+    // Real-time synchronization for critical data (restricted to last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const dateLimit = thirtyDaysAgo.toISOString().split('T')[0];
 
-    const unsubSettings = onSnapshot(collection(db, 'settings'), (snap) => {
+    const role = session.role;
+    const uid = session.uid;
+    const kelasWali = session.kelas;
+    const isWali = session.isWali;
+    const jabatan = session.jabatan || '';
+
+    // Deterministic state check for school leadership
+    const isLeadership = role === 'Guru' && (jabatan === 'Kamad' || jabatan === 'Wakamad');
+
+    let unsubAttendance = () => {};
+    let unsubTeacherAttendance = () => {};
+    let unsubStudents = () => {};
+    let unsubTeachers = () => {};
+    let unsubClassrooms = () => {};
+    let unsubSettings = () => {};
+    let unsubHolidays = () => {};
+    let unsubSchedules = () => {};
+
+    // 1. Settings & Holidays are lightweight config models, fetch safely
+    unsubSettings = onSnapshot(collection(db, 'settings'), (snap) => {
       setSettings(snap.docs.map(d => d.data() as DaySetting));
     }, (error) => handleFirestoreError(error, OperationType.GET, 'settings'));
 
-    const unsubHolidays = onSnapshot(collection(db, 'holidays'), (snap) => {
+    unsubHolidays = onSnapshot(collection(db, 'holidays'), (snap) => {
       const data = snap.docs.map(d => d.data() as Holiday);
       setHolidays(data.sort((a, b) => b.tanggal.localeCompare(a.tanggal)));
     }, (error) => handleFirestoreError(error, OperationType.GET, 'holidays'));
 
-    const unsubSchedules = onSnapshot(collection(db, 'teachingSchedules'), (snap) => {
-      setTeachingSchedules(snap.docs.map(d => d.data() as TeachingSchedule));
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'teachingSchedules'));
+    // 2. Performance & Quota Optimization dynamically applied
+    if (role === 'Siswa') {
+      // Student accounts only fetch their specific account profile, and their specific attendance logs
+      unsubStudents = onSnapshot(doc(db, 'students', uid), (snap) => {
+        if (snap.exists()) {
+          setStudents([{ nisn: snap.id, ...snap.data() } as Student]);
+        } else {
+          setStudents([]);
+        }
+      }, (error) => handleFirestoreError(error, OperationType.GET, `students/${uid}`));
+
+      unsubAttendance = onSnapshot(
+        query(
+          collection(db, 'attendance'),
+          where('nisn', '==', uid)
+        ),
+        (snap) => {
+          setAttendance(snap.docs.map(d => d.data() as Attendance));
+        },
+        (error) => handleFirestoreError(error, OperationType.GET, 'attendance')
+      );
+
+      // Nullify heavy teacher/classroom lists for student sessions
+      setTeachers([]);
+      setClassrooms([]);
+      setTeacherAttendance([]);
+      setTeachingSchedules([]);
+
+    } else if (role === 'Guru') {
+      if (isLeadership) {
+        // Leadership needs wider scope
+        unsubAttendance = onSnapshot(
+          query(
+            collection(db, 'attendance'), 
+            where('tanggal', '>=', dateLimit),
+            orderBy('tanggal', 'desc')
+          ), 
+          (snap) => {
+            setAttendance(snap.docs.map(d => d.data() as Attendance));
+          }, 
+          (error) => handleFirestoreError(error, OperationType.GET, 'attendance')
+        );
+
+        unsubTeacherAttendance = onSnapshot(
+          query(
+            collection(db, 'teacherAttendance'), 
+            where('tanggal', '>=', dateLimit),
+            orderBy('tanggal', 'desc')
+          ), 
+          (snap) => {
+            setTeacherAttendance(snap.docs.map(d => d.data() as TeacherAttendance));
+          }, 
+          (error) => handleFirestoreError(error, OperationType.GET, 'teacherAttendance')
+        );
+
+        unsubStudents = onSnapshot(collection(db, 'students'), (snap) => {
+          const data = snap.docs.map(d => ({ nisn: d.id, ...d.data() } as Student));
+          setStudents(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+        }, (error) => handleFirestoreError(error, OperationType.GET, 'students'));
+
+        unsubTeachers = onSnapshot(collection(db, 'teachers'), (snap) => {
+          const data = snap.docs.map(d => ({ nip: d.id, ...d.data() } as Teacher));
+          setTeachers(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+        }, (error) => handleFirestoreError(error, OperationType.GET, 'teachers'));
+
+        unsubClassrooms = onSnapshot(collection(db, 'classrooms'), (snap) => {
+          const data = snap.docs.map(d => d.data() as Classroom);
+          setClassrooms(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+        }, (error) => handleFirestoreError(error, OperationType.GET, 'classrooms'));
+
+        unsubSchedules = onSnapshot(collection(db, 'teachingSchedules'), (snap) => {
+          setTeachingSchedules(snap.docs.map(d => d.data() as TeachingSchedule));
+        }, (error) => handleFirestoreError(error, OperationType.GET, 'teachingSchedules'));
+
+      } else if (isWali && kelasWali) {
+        // Homeroom Teacher: scope student records and attendance within their class
+        unsubStudents = onSnapshot(
+          query(
+            collection(db, 'students'),
+            where('kelas', '==', kelasWali)
+          ),
+          (snap) => {
+            const data = snap.docs.map(d => ({ nisn: d.id, ...d.data() } as Student));
+            setStudents(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, 'students')
+        );
+
+        unsubAttendance = onSnapshot(
+          query(
+            collection(db, 'attendance'),
+            where('kelas', '==', kelasWali),
+            where('tanggal', '>=', dateLimit)
+          ),
+          (snap) => {
+            setAttendance(snap.docs.map(d => d.data() as Attendance));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, 'attendance')
+        );
+
+        unsubTeacherAttendance = onSnapshot(
+          query(
+            collection(db, 'teacherAttendance'),
+            where('nip', '==', uid),
+            where('tanggal', '>=', dateLimit)
+          ),
+          (snap) => {
+            setTeacherAttendance(snap.docs.map(d => d.data() as TeacherAttendance));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, 'teacherAttendance')
+        );
+
+        unsubSchedules = onSnapshot(
+          query(
+            collection(db, 'teachingSchedules'),
+            where('nip', '==', uid)
+          ),
+          (snap) => {
+            setTeachingSchedules(snap.docs.map(d => d.data() as TeachingSchedule));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, 'teachingSchedules')
+        );
+
+        unsubTeachers = onSnapshot(doc(db, 'teachers', uid), (snap) => {
+          if (snap.exists()) {
+            setTeachers([{ nip: snap.id, ...snap.data() } as Teacher]);
+          } else {
+            setTeachers([]);
+          }
+        }, (error) => handleFirestoreError(error, OperationType.GET, `teachers/${uid}`));
+
+        unsubClassrooms = onSnapshot(collection(db, 'classrooms'), (snap) => {
+          const data = snap.docs.map(d => d.data() as Classroom);
+          setClassrooms(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+        }, (error) => handleFirestoreError(error, OperationType.GET, 'classrooms'));
+
+      } else {
+        // Regular Subject Teacher: scoped resources
+        unsubTeachers = onSnapshot(doc(db, 'teachers', uid), (snap) => {
+          if (snap.exists()) {
+            setTeachers([{ nip: snap.id, ...snap.data() } as Teacher]);
+          } else {
+            setTeachers([]);
+          }
+        }, (error) => handleFirestoreError(error, OperationType.GET, `teachers/${uid}`));
+
+        unsubTeacherAttendance = onSnapshot(
+          query(
+            collection(db, 'teacherAttendance'),
+            where('nip', '==', uid),
+            where('tanggal', '>=', dateLimit)
+          ),
+          (snap) => {
+            setTeacherAttendance(snap.docs.map(d => d.data() as TeacherAttendance));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, 'teacherAttendance')
+        );
+
+        unsubSchedules = onSnapshot(
+          query(
+            collection(db, 'teachingSchedules'),
+            where('nip', '==', uid)
+          ),
+          (snap) => {
+            setTeachingSchedules(snap.docs.map(d => d.data() as TeachingSchedule));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, 'teachingSchedules')
+        );
+
+        setStudents([]);
+        setClassrooms([]);
+        setAttendance([]);
+      }
+
+    } else if (role === 'Admin') {
+      unsubAttendance = onSnapshot(
+        query(
+          collection(db, 'attendance'), 
+          where('tanggal', '>=', dateLimit),
+          orderBy('tanggal', 'desc')
+        ), 
+        (snap) => {
+          setAttendance(snap.docs.map(d => d.data() as Attendance));
+        }, 
+        (error) => handleFirestoreError(error, OperationType.GET, 'attendance')
+      );
+
+      unsubTeacherAttendance = onSnapshot(
+        query(
+          collection(db, 'teacherAttendance'), 
+          where('tanggal', '>=', dateLimit),
+          orderBy('tanggal', 'desc')
+        ), 
+        (snap) => {
+          setTeacherAttendance(snap.docs.map(d => d.data() as TeacherAttendance));
+        }, 
+        (error) => handleFirestoreError(error, OperationType.GET, 'teacherAttendance')
+      );
+
+      unsubStudents = onSnapshot(collection(db, 'students'), (snap) => {
+        const data = snap.docs.map(d => ({ nisn: d.id, ...d.data() } as Student));
+        setStudents(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'students'));
+
+      unsubTeachers = onSnapshot(collection(db, 'teachers'), (snap) => {
+        const data = snap.docs.map(d => ({ nip: d.id, ...d.data() } as Teacher));
+        setTeachers(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'teachers'));
+
+      unsubClassrooms = onSnapshot(collection(db, 'classrooms'), (snap) => {
+        const data = snap.docs.map(d => d.data() as Classroom);
+        setClassrooms(data.sort((a, b) => a.nama.localeCompare(b.nama)));
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'classrooms'));
+
+      unsubSchedules = onSnapshot(collection(db, 'teachingSchedules'), (snap) => {
+        setTeachingSchedules(snap.docs.map(d => d.data() as TeachingSchedule));
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'teachingSchedules'));
+    }
 
     return () => {
       unsubAttendance();
       unsubTeacherAttendance();
-      unsubAppConfig();
       unsubStudents();
       unsubTeachers();
       unsubClassrooms();
@@ -331,7 +550,7 @@ export default function App() {
       unsubHolidays();
       unsubSchedules();
     };
-  }, [firebaseConnected]);
+  }, [firebaseConnected, session]);
 
   const [selectedTeacherNipForCapaian, setSelectedTeacherNipForCapaian] = useState<string | null>(null);
 
@@ -1612,8 +1831,91 @@ export default function App() {
 
   const dayOrder: any = { "Senin": 1, "Selasa": 2, "Rabu": 3, "Kamis": 4, "Jumat": 5, "Sabtu": 6, "Minggu": 7 };
 
+  const renderQuotaNoticeModal = () => {
+    if (!quotaExceeded || dismissQuotaNotice) return null;
+
+    return (
+      <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[10000] flex items-center justify-center p-4 overflow-y-auto">
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl overflow-hidden border border-red-100 flex flex-col relative"
+        >
+          {/* Top Warning Banner Strip */}
+          <div className="absolute top-0 left-0 w-full h-3 bg-gradient-to-r from-red-500 via-orange-500 to-amber-500"></div>
+          
+          <div className="p-8 md:p-10 flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-6 text-red-600 shadow-sm shadow-red-100 animate-pulse">
+              <AlertTriangle size={32} />
+            </div>
+
+            <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter mb-3 leading-tight">
+              Kapasitas Database Harian Terlampaui
+            </h2>
+            <div className="bg-red-50 text-[10px] font-black text-red-700 uppercase tracking-widest px-3 py-1 rounded-full border border-red-100 mb-6">
+              Quota Limit Exceeded
+            </div>
+
+            <div className="space-y-4 text-left bg-zinc-50 p-6 rounded-2xl border border-zinc-100 text-xs text-zinc-600 leading-relaxed font-medium">
+              <p>
+                Sistem mendeteksi bahwa batas kuota gratis harian (<strong>Firestore Free Tier Read units</strong>) untuk proyek database Firebase ini telah terlampaui.
+              </p>
+              <div className="flex gap-2.5 items-start">
+                <div className="w-2 h-2 rounded-full bg-red-500 mt-1.5 shrink-0" />
+                <p>
+                  Batas harian Spark Plan adalah <strong>50.000 pembacaan</strong> per hari. Layanan akan dipulihkan secara otomatis setelah kuota di-reset kembali keesokan harinya oleh Google Cloud.
+                </p>
+              </div>
+              <div className="flex gap-2.5 items-start">
+                <div className="w-2 h-2 rounded-full bg-zinc-900 mt-1.5 shrink-0" />
+                <p>
+                  <strong>Untuk Pemilik Proyek:</strong> Anda dapat mengaktifkan billing (upgrade ke Blaze/Pay-as-you-go plan) pada konsol Firebase untuk menghindari batas harian ini sama sekali.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 w-full space-y-3">
+              <a 
+                href="https://console.firebase.google.com/project/gen-lang-client-0541836694/firestore/databases/ai-studio-8c6b2059-8af6-4d53-bb89-22a78bab9d06/data?openUpgradeDialog=true"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full bg-zinc-950 text-white rounded-2xl py-4.5 px-6 font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all flex items-center justify-center gap-2.5 group cursor-pointer shadow-lg shadow-zinc-200 no-underline"
+              >
+                <ExternalLink size={16} className="text-amber-400 group-hover:rotate-12 transition-transform" />
+                Buka Konsol Firebase & Upgrade
+              </a>
+
+              <div className="flex gap-3 w-full">
+                <a 
+                  href="https://firebase.google.com/pricing#cloud-firestore"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 bg-white hover:bg-zinc-50 text-zinc-700 border border-zinc-200 rounded-2xl py-3.5 px-4 font-bold text-[11px] uppercase tracking-wider transition-all text-center no-underline"
+                >
+                  Informasi Harga (Spark Plan)
+                </a>
+
+                <button 
+                  onClick={() => setDismissQuotaNotice(true)}
+                  className="flex-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-2xl py-3.5 px-4 font-bold text-[11px] uppercase tracking-wider transition-all animate-fade-in"
+                >
+                  Sembunyikan
+                </button>
+              </div>
+            </div>
+
+            <p className="mt-6 text-[10px] font-bold text-zinc-400 italic">
+              *Proyek ID: gen-lang-client-0541836694 • DB: ai-studio-8c6b2059-8af6-4d53-bb89-22a78bab9d06
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  };
+
   const renderLogin = () => (
     <div className="min-h-screen bg-green-950 flex items-center justify-center p-4">
+      {renderQuotaNoticeModal()}
       {loading && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-[9999] flex items-center justify-center">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center">
@@ -2808,6 +3110,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-gray-50 text-zinc-900 font-sans pb-20 md:pb-0">
+      {renderQuotaNoticeModal()}
       {loading && (
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[9999] flex items-center justify-center">
           <div className="flex flex-col items-center">

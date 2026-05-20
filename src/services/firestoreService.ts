@@ -46,6 +46,7 @@ export const firestoreService = {
       return false;
     } catch (e) {
       console.error("[DEBUG] Bootstrap error:", e);
+      handleFirestoreError(e, OperationType.GET, "teachers");
       return false;
     }
   },
@@ -71,7 +72,8 @@ export const firestoreService = {
           role: data.role, 
           uid: data.nip,
           kelas: data.kelas,
-          isWali: !!data.kelas
+          isWali: !!data.kelas,
+          jabatan: data.jabatan
         };
       }
     } catch (e) {
