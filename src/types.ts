@@ -51,6 +51,7 @@ export interface TeachingSchedule {
   targetPertemuan: number;
   mapel?: string;
   hari: string;
+  jps?: number[];
 }
 
 export interface Classroom {
@@ -100,6 +101,9 @@ export interface DaySetting {
   hari: string;
   masuk: string;
   pulang: string;
+  activeJps?: number[];
+  reasonInactive?: string;
+  targetDate?: string;
 }
 
 export interface AppConfig {

@@ -15,7 +15,7 @@ import {
   RefreshCcw, Printer, Download, Eye, EyeOff, Calendar, Clock, Trash2, Edit, Save,
   ArrowLeft, Upload, FileSpreadsheet, BarChart3, Info, CheckCircle2, XCircle, AlertTriangle, AlertCircle,
   Maximize2, CreditCard, Award, ExternalLink, ShieldCheck, Sparkles, Heart, ArrowUpCircle,
-  BookOpen, X
+  BookOpen, X, FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { firestoreService } from './services/firestoreService';
@@ -111,6 +111,48 @@ const countDaysInMonth = (year: number, month: number, dayName: string, holidays
   return count;
 };
 
+const getEffectiveTargetSessionsForSchedule = (sch: TeachingSchedule, year: number, month: number, holidays: Holiday[], settings: DaySetting[], upToDay?: number) => {
+  const dayIndex = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"].indexOf(sch.hari);
+  if (dayIndex === -1) return 0;
+
+  let totalSessions = 0;
+  let date = new Date(year, month, 1);
+  const lastDay = upToDay || new Date(year, month + 1, 0).getDate();
+
+  while (date.getMonth() === month && date.getDate() <= lastDay) {
+    if (date.getDay() === dayIndex) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
+
+      const isHoliday = (holidays || []).some(h => h.tanggal === dateStr);
+      if (!isHoliday) {
+        const daySett = (settings || []).find(s => s.hari === sch.hari);
+        const limitJp = sch.hari === 'Jumat' ? 6 : 8;
+        const defaultJps = Array.from({ length: limitJp }, (_, i) => i + 1);
+        let activeJps = defaultJps;
+        if (daySett) {
+          if (!daySett.targetDate || daySett.targetDate === dateStr) {
+            activeJps = Array.isArray(daySett.activeJps) ? daySett.activeJps : defaultJps;
+          }
+        }
+
+        const schJps = sch.jps || [];
+        if (schJps.length > 0) {
+          const activeSchJpCount = schJps.filter(j => activeJps.includes(j)).length;
+          totalSessions += activeSchJpCount;
+        } else {
+          const scale = activeJps.length / limitJp;
+          totalSessions += Math.round(scale * (Number(sch.targetPertemuan) || 0));
+        }
+      }
+    }
+    date.setDate(date.getDate() + 1);
+  }
+  return totalSessions;
+};
+
 const getEffectiveDays = (year: number, month: number, holidays: Holiday[], settings: DaySetting[], upToDay?: number) => {
   const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
   const days: string[] = [];
@@ -186,6 +228,11 @@ export default function App() {
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [teacherAttendance, setTeacherAttendance] = useState<TeacherAttendance[]>([]);
   const [settings, setSettings] = useState<DaySetting[]>([]);
+  const [savedDaysStatus, setSavedDaysStatus] = useState<{[hari: string]: 'idle' | 'saving' | 'saved'}>({});
+  const [localActiveJps, setLocalActiveJps] = useState<{[hari: string]: number[]}>({});
+  const [localReasonInactive, setLocalReasonInactive] = useState<{[hari: string]: string}>({});
+  const [localMasuk, setLocalMasuk] = useState<{[hari: string]: string}>({});
+  const [localPulang, setLocalPulang] = useState<{[hari: string]: string}>({});
   const [teachingSchedules, setTeachingSchedules] = useState<TeachingSchedule[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [appConfig, setAppConfig] = useState<AppConfig>({});
@@ -1031,8 +1078,7 @@ export default function App() {
                       let totalActualSessions = 0;
 
                       group.sessions.forEach(s => {
-                        const targetOccurrences = countDaysInMonth(year, month, s.hari, holidays);
-                        totalMonthlyTarget += targetOccurrences * (Number(s.targetPertemuan) || 0);
+                        totalMonthlyTarget += getEffectiveTargetSessionsForSchedule(s, year, month, holidays, settings);
 
                         const actual = teacherAttendance.filter(ta => 
                           ta.nip === selectedTeacher.nip && 
@@ -1273,8 +1319,7 @@ export default function App() {
                   let totalActualSessions = 0;
 
                   group.sessions.forEach(s => {
-                    const targetOccurrences = countDaysInMonth(year, month, s.hari, holidays);
-                    totalMonthlyTarget += targetOccurrences * (Number(s.targetPertemuan) || 0);
+                    totalMonthlyTarget += getEffectiveTargetSessionsForSchedule(s, year, month, holidays, settings);
 
                     const actual = teacherAttendance.filter(ta => 
                       ta.nip === data.nip && 
@@ -1802,21 +1847,32 @@ export default function App() {
 
   // Merge database classrooms with specified items to cover all eventualities gracefully
   const naikKelasOriginOptions = useMemo(() => {
-    const specified = ['VII A', 'VII B', 'VII C', 'VII D', 'VII E', 'VII F', 'VIII A', 'VIII B', 'VIII C', 'VIII D', 'VIII E', 'VIII F'];
+    const specified = [
+      'VII A', 'VII B', 'VII C', 'VII D', 'VII E', 'VII F',
+      'VIII A', 'VIII B', 'VIII C', 'VIII D', 'VIII E', 'VIII F',
+      'IX A', 'IX B', 'IX C', 'IX D', 'IX E', 'IX F'
+    ];
     // Filter database classrooms that are not already in specified
     const dbOthers = (classrooms || [])
       .map(c => c.nama)
-      .filter(name => !specified.includes(name) && (name.startsWith('VII') || name.startsWith('7') || name.startsWith('VIII') || name.startsWith('8')));
+      .filter(name => !specified.includes(name) && (
+        name.startsWith('VII') || name.startsWith('7') ||
+        name.startsWith('VIII') || name.startsWith('8') ||
+        name.startsWith('IX') || name.startsWith('9')
+      ));
     return [...specified, ...dbOthers];
   }, [classrooms]);
 
   const naikKelasTargetOptions = useMemo(() => {
+    if (naikKelasOrigin && (naikKelasOrigin.startsWith('IX') || naikKelasOrigin.startsWith('9'))) {
+      return ['Tamat'];
+    }
     const specified = ['VIII A', 'VIII B', 'VIII C', 'VIII D', 'VIII E', 'VIII F', 'IX A', 'IX B', 'IX C', 'IX D', 'IX E', 'IX F'];
     const dbOthers = (classrooms || [])
       .map(c => c.nama)
       .filter(name => !specified.includes(name) && (name.startsWith('VIII') || name.startsWith('8') || name.startsWith('IX') || name.startsWith('9')));
     return [...specified, ...dbOthers];
-  }, [classrooms]);
+  }, [classrooms, naikKelasOrigin]);
 
   const naikKelasFilteredStudents = useMemo(() => {
     if (!naikKelasOrigin) return [];
@@ -1861,6 +1917,17 @@ export default function App() {
     }
   }, [naikKelasOrigin, showNaikKelasModal, students]);
 
+  // Autoselect 'Tamat' when Class IX is chosen as Origin Class
+  useEffect(() => {
+    if (naikKelasOrigin && (naikKelasOrigin.startsWith('IX') || naikKelasOrigin.startsWith('9'))) {
+      setNaikKelasTarget('Tamat');
+    } else {
+      if (naikKelasTarget === 'Tamat') {
+        setNaikKelasTarget('');
+      }
+    }
+  }, [naikKelasOrigin]);
+
   const handleProsesNaikKelas = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!naikKelasOrigin || !naikKelasTarget) {
@@ -1872,30 +1939,42 @@ export default function App() {
       return;
     }
 
+    const isTamat = naikKelasTarget === 'Tamat' || naikKelasOrigin.startsWith('IX') || naikKelasOrigin.startsWith('9');
+
     setConfirmModal({
       show: true,
-      title: 'Konfirmasi Naik Kelas?',
-      message: `Sebanyak ${naikKelasSelectedStudents.length} siswa akan diubah kelasnya dari ${naikKelasOrigin} menjadi ${naikKelasTarget}. Aksi ini akan langsung disinkronkan ke Firestore.`,
+      title: isTamat ? 'Konfirmasi Kelulusan (Tamat)?' : 'Konfirmasi Naik Kelas?',
+      message: isTamat 
+        ? `Apakah anda yakin ingin memproses kelulusan? Sebanyak ${naikKelasSelectedStudents.length} siswa dari kelas ${naikKelasOrigin} yang terpilih akan DIHAPUS PERMANEN dari database karena telah dinyatakan lulus dari madrasah.` 
+        : `Sebanyak ${naikKelasSelectedStudents.length} siswa akan diubah kelasnya dari ${naikKelasOrigin} menjadi ${naikKelasTarget}. Aksi ini akan langsung disinkronkan ke Firestore.`,
       entityName: `${naikKelasSelectedStudents.length} Siswa`,
       onConfirm: async () => {
         toggleLoader(true);
         try {
           // Filter students who are selected
           const studentsToUpdate = students.filter(s => naikKelasSelectedStudents.includes(s.nisn));
-          for (const s of studentsToUpdate) {
-            await firestoreService.saveSiswa({
-              ...s,
-              kelas: naikKelasTarget
-            });
+          if (isTamat) {
+            for (const s of studentsToUpdate) {
+              await firestoreService.hapusSiswa(s.nisn);
+            }
+            triggerSuccess("KELULUSAN BERHASIL", `Sukses! Sebanyak ${studentsToUpdate.length} siswa kelas IX telah dinyatakan lulus & data dihapus dari database.`);
+          } else {
+            for (const s of studentsToUpdate) {
+              await firestoreService.saveSiswa({
+                ...s,
+                kelas: naikKelasTarget
+              });
+            }
+            triggerSuccess("BERHASIL", `Hore! Sebanyak ${studentsToUpdate.length} siswa berhasil dinaikkan kelas ke ${naikKelasTarget}.`);
           }
           setShowNaikKelasModal(false);
           setNaikKelasOrigin('');
           setNaikKelasTarget('');
           setNaikKelasSelectedStudents([]);
           setNaikKelasSearchKeyword('');
-          triggerSuccess("BERHASIL", `Hore! Sebanyak ${studentsToUpdate.length} siswa berhasil dinaikkan kelas ke ${naikKelasTarget}.`);
         } catch (e) {
-          alert("Gagal melakukan proses naik kelas.");
+          console.error(e);
+          alert(isTamat ? "Gagal memproses kelulusan/penghapusan siswa kelas IX." : "Gagal melakukan proses naik kelas.");
         } finally {
           toggleLoader(false);
         }
@@ -1908,6 +1987,7 @@ export default function App() {
   const [editingKelas, setEditingKelas] = useState<any | null>(null);
   const [showSuccessToast, setShowSuccessToast] = useState<{title: string, message: string} | null>(null);
   const [newLibur, setNewLibur] = useState({ tanggal: '', keterangan: '' });
+  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => new Date().toISOString().slice(0, 7));
 
   const [showCelebration, setShowCelebration] = useState(false);
 
@@ -2232,8 +2312,7 @@ export default function App() {
           const schedules = teachingSchedules.filter(ts => ts.nip === t.nip && (rekapFilter.kelas ? ts.kelas === rekapFilter.kelas : true));
           const [y, m] = rekapFilter.bulan.split('-').map(Number);
           const totalTarget = schedules.reduce((sum, sch) => {
-            const occ = countDaysInMonth(y, m - 1, sch.hari, holidays);
-            return sum + (occ * (Number(sch.targetPertemuan) || 0));
+            return sum + getEffectiveTargetSessionsForSchedule(sch, y, m - 1, holidays, settings);
           }, 0);
           const monthAtts = teacherAttendance.filter(ta => ta.nip === t.nip && (rekapFilter.kelas ? ta.kelas === rekapFilter.kelas : true) && ta.tanggal.startsWith(rekapFilter.bulan));
           const actual = monthAtts.length;
@@ -2289,8 +2368,7 @@ export default function App() {
           const schs = teachingSchedules.filter(ts => ts.nip === t.nip && (rekapFilter.kelas ? ts.kelas === rekapFilter.kelas : true));
           const [y, m] = rekapFilter.bulan.split('-').map(Number);
           const tgt = schs.reduce((sum, sch) => {
-            const occ = countDaysInMonth(y, m - 1, sch.hari, holidays);
-            return sum + (occ * (Number(sch.targetPertemuan) || 0));
+            return sum + getEffectiveTargetSessionsForSchedule(sch, y, m - 1, holidays, settings);
           }, 0);
           const atts = teacherAttendance.filter(ta => ta.nip === t.nip && (rekapFilter.kelas ? ta.kelas === rekapFilter.kelas : true) && ta.tanggal.startsWith(rekapFilter.bulan));
           const act = atts.length;
@@ -3327,7 +3405,8 @@ export default function App() {
     </AnimatePresence>
   );
 
-  const [teachingSessions, setTeachingSessions] = useState<{kelas: string, hari: string, target: number}[]>([]);
+  const [teachingSessions, setTeachingSessions] = useState<{kelas: string, hari: string, target: number, jps?: number[]}[]>([]);
+  const [openJpDropdown, setOpenJpDropdown] = useState<number | null>(null);
 
   const handleSaveJadwal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3627,7 +3706,7 @@ export default function App() {
                 <div className="flex justify-between items-center mb-3">
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Sesi Mengajar (Hari & Target)</label>
                   <button 
-                    onClick={() => setTeachingSessions([...teachingSessions, { kelas: editingJadwal?.kelas || '', hari: 'Senin', target: 2 }])}
+                    onClick={() => setTeachingSessions([...teachingSessions, { kelas: editingJadwal?.kelas || '', hari: 'Senin', target: 2, jps: [] }])}
                     className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1 hover:text-blue-800 transition-colors"
                   >
                     <Plus size={10} /> Tambah Hari
@@ -3649,6 +3728,7 @@ export default function App() {
                           onChange={e => {
                             const newSess = [...teachingSessions];
                             newSess[idx].hari = e.target.value;
+                            newSess[idx].jps = []; // Reset selected JPs since active JPs might differ for this day
                             setTeachingSessions(newSess);
                           }}
                           className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold focus:ring-1 focus:ring-green-500"
@@ -3656,7 +3736,75 @@ export default function App() {
                           {["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"].map(h => <option key={h} value={h}>{h}</option>)}
                         </select>
                       </div>
-                      <div className="w-32">
+
+                      {/* Multiselect Dropdown for JPs */}
+                      <div className="w-44 relative">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">Jam Pelajaran (JP)</label>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setOpenJpDropdown(openJpDropdown === idx ? null : idx)}
+                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-left flex justify-between items-center gap-1 focus:ring-1 focus:ring-green-500 cursor-pointer min-h-[38px] truncate"
+                          >
+                            <span className="truncate">
+                              {session.jps && session.jps.length > 0
+                                ? session.jps.map(j => `JP ${j}`).join(', ')
+                                : '-- Pilih JP --'}
+                            </span>
+                            <span className="text-gray-400 text-[9px]">▼</span>
+                          </button>
+
+                          {openJpDropdown === idx && (() => {
+                            const daySett = settings.find(s => s.hari === session.hari);
+                            const maxJp = session.hari === 'Jumat' ? 6 : 8;
+                            const activeList = daySett && Array.isArray(daySett.activeJps)
+                              ? daySett.activeJps
+                              : Array.from({ length: maxJp }, (_, i) => i + 1);
+
+                            return (
+                              <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-2 max-h-48 overflow-y-auto">
+                                {activeList.length === 0 ? (
+                                  <p className="text-[10px] text-gray-400 p-2 italic text-center">Tidak ada JP aktif</p>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {activeList.map(j => {
+                                      const isSelected = (session.jps || []).includes(j);
+                                      return (
+                                        <label
+                                          key={j}
+                                          className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded-lg text-xs font-bold cursor-pointer text-zinc-700"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={(e) => {
+                                              const checked = e.target.checked;
+                                              const currentJps = session.jps || [];
+                                              let nextJps: number[];
+                                              if (checked) {
+                                                nextJps = [...currentJps, j].sort((a,b) => a-b);
+                                              } else {
+                                                nextJps = currentJps.filter(n => n !== j);
+                                              }
+                                              const updated = [...teachingSessions];
+                                              updated[idx] = { ...session, jps: nextJps };
+                                              setTeachingSessions(updated);
+                                            }}
+                                            className="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                                          />
+                                          <span>JP {j}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div className="w-24">
                         <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">Sesi/Jam</label>
                         <input 
                           type="number" 
@@ -4524,8 +4672,7 @@ export default function App() {
                              const isCurrentMonth = analysisMonth === currentDate.slice(0, 7);
                              const upToDay = isCurrentMonth ? new Date().getDate() : undefined;
                              const totalTarget = (schedules || []).reduce((sum, s) => {
-                               const occ = countDaysInMonth(y, targetMonth, s.hari, holidays, upToDay);
-                               return sum + (occ * (Number(s.targetPertemuan) || 0));
+                               return sum + getEffectiveTargetSessionsForSchedule(s, y, targetMonth, holidays, settings, upToDay);
                              }, 0);
                              const currentMonth = analysisMonth;
                              const actual = (teacherAttendance || []).filter(ta => ta.nip === t.nip && (analysisClass ? ta.kelas === analysisClass : true) && ta.tanggal.startsWith(currentMonth)).length;
@@ -4561,8 +4708,7 @@ export default function App() {
                           const isCurrentMonth = analysisMonth === currentDate.slice(0, 7);
                           const upToDay = isCurrentMonth ? new Date().getDate() : undefined;
                           const totalTarget = (schedules || []).reduce((sum, s) => {
-                            const occ = countDaysInMonth(y, targetMonth, s.hari, holidays, upToDay);
-                            return sum + (occ * (Number(s.targetPertemuan) || 1));
+                            return sum + getEffectiveTargetSessionsForSchedule(s, y, targetMonth, holidays, settings, upToDay);
                           }, 0);
                           const currentMonth = analysisMonth;
                           const actual = (teacherAttendance || []).filter(ta => ta.nip === t.nip && (analysisClass ? ta.kelas === analysisClass : true) && ta.tanggal.startsWith(currentMonth)).length;
@@ -4636,8 +4782,7 @@ export default function App() {
                       
                       return groupedJadwal.slice(pagination.jadwal, pagination.jadwal + pageSize).map((g: any, i) => {
                         const totalTarget = g.sessions.reduce((sum: number, s: any) => {
-                          const occ = countDaysInMonth(year, month, s.hari, holidays);
-                          return sum + (occ * (Number(s.targetPertemuan) || 0));
+                          return sum + getEffectiveTargetSessionsForSchedule(s, year, month, holidays, settings);
                         }, 0);
 
                         return (
@@ -4669,7 +4814,7 @@ export default function App() {
                               <div className="flex justify-center gap-3">
                                  <button onClick={() => { 
                                    setEditingJadwal({ nip: g.nip, namaGuru: g.namaGuru, mapel: g.mapel } as any); 
-                                   setTeachingSessions(g.sessions.map((s: any) => ({ kelas: s.kelas, hari: s.hari, target: s.targetPertemuan })));
+                                   setTeachingSessions(g.sessions.map((s: any) => ({ kelas: s.kelas, hari: s.hari, target: s.targetPertemuan, jps: s.jps || [] })));
                                    setShowJadwalModal(true); 
                                  }} className="text-blue-500 hover:bg-blue-50 p-2 rounded-lg transition-all"><Edit size={16} /></button>
                                  <button onClick={() => { 
@@ -5424,13 +5569,99 @@ export default function App() {
                 .filter(Boolean)
             )) : classrooms.map(c => c.nama);
 
-            const filteredRecap = teacherAttendance.filter(a => {
-              const matchesNip = rekapMapelFilter.nip ? a.nip === rekapMapelFilter.nip : (session?.role !== 'Admin' ? a.nip === session?.uid : true);
-              const matchesBulan = rekapMapelFilter.bulan ? a.tanggal.startsWith(rekapMapelFilter.bulan) : true;
-              const matchesMapel = rekapMapelFilter.mapel ? a.mapel === rekapMapelFilter.mapel : true;
-              const matchesKelas = rekapMapelFilter.kelas ? a.kelas === rekapMapelFilter.kelas : true;
-              return matchesNip && matchesBulan && matchesMapel && matchesKelas;
-            });
+            const filteredRecap = (() => {
+              if (!rekapMapelFilter.bulan) return [];
+              const [yearStr, monthStr] = rekapMapelFilter.bulan.split('-');
+              const yearNum = parseInt(yearStr);
+              const monthNum = parseInt(monthStr);
+              if (isNaN(yearNum) || isNaN(monthNum)) return [];
+
+              const daysInMonth = new Date(yearNum, monthNum, 0).getDate();
+              const monthDates: string[] = [];
+              for (let d = 1; d <= daysInMonth; d++) {
+                const dayString = d < 10 ? `0${d}` : `${d}`;
+                monthDates.push(`${rekapMapelFilter.bulan}-${dayString}`);
+              }
+
+              const targetSelectedNip = rekapMapelFilter.nip || (session?.role !== 'Admin' ? session?.uid : '');
+              const matchingSchedules = teachingSchedules.filter(s => {
+                const matchesNip = targetSelectedNip ? s.nip === targetSelectedNip : true;
+                const matchesMapel = rekapMapelFilter.mapel ? s.mapel === rekapMapelFilter.mapel : true;
+                const matchesKelas = rekapMapelFilter.kelas ? s.kelas === rekapMapelFilter.kelas : true;
+                return matchesNip && matchesMapel && matchesKelas;
+              });
+
+              const fullRecapList: any[] = [];
+              let virtualIdCounter = 1;
+
+              monthDates.forEach(dateStr => {
+                const indonesianDayName = getIndonesianDay(dateStr);
+                if (indonesianDayName === 'Minggu') return;
+
+                const holidayMatch = holidays.find(h => h.tanggal === dateStr);
+                const daySett = settings.find(s => s.hari === indonesianDayName);
+                const limitJp = indonesianDayName === 'Jumat' ? 6 : 8;
+                const defaultJps = Array.from({ length: limitJp }, (_, i) => i + 1);
+
+                let activeJps = defaultJps;
+                let reason = 'Kegiatan Utama';
+
+                if (holidayMatch) {
+                  activeJps = [];
+                  reason = holidayMatch.keterangan;
+                } else if (daySett) {
+                  if (!daySett.targetDate || daySett.targetDate === dateStr) {
+                    activeJps = Array.isArray(daySett.activeJps) ? daySett.activeJps : defaultJps;
+                    reason = daySett.reasonInactive || 'Kegiatan Utama';
+                  }
+                }
+
+                const activeSchedulesForDay = matchingSchedules.filter(s => s.hari === indonesianDayName);
+
+                activeSchedulesForDay.forEach(sch => {
+                  const actualScan = teacherAttendance.find(ta => 
+                    ta.nip === sch.nip && 
+                    ta.tanggal === dateStr && 
+                    ta.mapel === sch.mapel && 
+                    ta.kelas === sch.kelas
+                  );
+
+                  const schJps = sch.jps || [];
+                  const hasInactiveScheduleJp = schJps.length > 0 
+                    ? schJps.some(jp => !activeJps.includes(jp)) 
+                    : activeJps.length < limitJp;
+
+                  let finalStatusText = 'Tidak Mengajar';
+                  if (actualScan) {
+                    finalStatusText = hasInactiveScheduleJp 
+                      ? `Mengajar dan ${reason}` 
+                      : 'Mengajar';
+                  } else {
+                    if (hasInactiveScheduleJp) {
+                      finalStatusText = reason;
+                    } else {
+                      finalStatusText = 'Tidak Mengajar';
+                    }
+                  }
+
+                  fullRecapList.push({
+                    id: actualScan?.id || `virt-${sch.nip}-${sch.kelas}-${dateStr}-${virtualIdCounter++}`,
+                    nip: sch.nip,
+                    nama: sch.namaGuru,
+                    tanggal: dateStr,
+                    mapel: sch.mapel || '-',
+                    kelas: sch.kelas,
+                    jam: actualScan?.jam || '-',
+                    terlambat: actualScan?.terlambat || 0,
+                    scanned: !!actualScan,
+                    statusKeterangan: finalStatusText,
+                    jps: schJps
+                  });
+                });
+              });
+
+              return fullRecapList.sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+            })();
 
             return (
               <motion.div key="rekap-mapel" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -5453,72 +5684,76 @@ export default function App() {
                      </div>
                      <div className="flex items-center gap-3 w-full md:w-auto">
                        <button 
-                          onClick={() => {
-                            const dataForExcel = filteredRecap.map((a, idx) => {
-                              const classAttendance = attendance.filter(sa => sa.kelas === a.kelas && sa.tanggal === a.tanggal);
-                              return {
-                                'No': idx + 1,
-                                'Hari': getIndonesianDay(a.tanggal),
-                                'Tanggal': a.tanggal,
-                                'Nama Guru': a.nama,
-                                'Mapel': a.mapel || '-',
-                                'Kelas': a.kelas,
-                                'Hadir': classAttendance.filter(sa => sa.status === 'Hadir').length,
-                                'Sakit': classAttendance.filter(sa => sa.status === 'Sakit').length,
-                                'Izin': classAttendance.filter(sa => sa.status === 'Izin').length,
-                                'Alfa': classAttendance.filter(sa => sa.status === 'Alfa').length,
-                                'Total Siswa': classAttendance.length,
-                                'Status': 'Mengajar'
-                              };
-                            });
-                            const ws = XLSX.utils.json_to_sheet(dataForExcel);
-                            const wb = XLSX.utils.book_new();
-                            XLSX.utils.book_append_sheet(wb, ws, "Rekap Mapel");
-                            XLSX.writeFile(wb, `Rekap_Mapel_${rekapMapelFilter.bulan}.xlsx`);
-                          }}
-                          className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-green-50 text-green-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-green-100 transition-all border border-green-100"
+                           onClick={() => {
+                             const dataForExcel = filteredRecap.map((a, idx) => {
+                               const classAttendance = attendance.filter(sa => sa.kelas === a.kelas && sa.tanggal === a.tanggal);
+                               const jpTextCol = a.jps && a.jps.length > 0 ? a.jps.map((j: number) => `JP ${j}`).join(', ') : '-';
+                               return {
+                                 'No': idx + 1,
+                                 'Hari': getIndonesianDay(a.tanggal),
+                                 'Tanggal': a.tanggal,
+                                 'Nama Guru': a.nama,
+                                 'Mapel': a.mapel || '-',
+                                 'Kelas': a.kelas,
+                                 'JP': jpTextCol,
+                                 'Hadir': classAttendance.filter(sa => sa.status === 'Hadir').length,
+                                 'Sakit': classAttendance.filter(sa => sa.status === 'Sakit').length,
+                                 'Izin': classAttendance.filter(sa => sa.status === 'Izin').length,
+                                 'Alfa': classAttendance.filter(sa => sa.status === 'Alfa').length,
+                                 'Total Siswa': classAttendance.length,
+                                 'Status': a.statusKeterangan
+                               };
+                             });
+                             const ws = XLSX.utils.json_to_sheet(dataForExcel);
+                             const wb = XLSX.utils.book_new();
+                             XLSX.utils.book_append_sheet(wb, ws, "Rekap Mapel");
+                             XLSX.writeFile(wb, `Rekap_Mapel_${rekapMapelFilter.bulan}.xlsx`);
+                           }}
+                           className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-green-50 text-green-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-green-100 transition-all border border-green-100"
                        >
                          <FileSpreadsheet size={16} /> Excel
                        </button>
                        <button 
-                          onClick={() => {
-                            const doc = new jsPDF('l', 'mm', 'a4');
-                            doc.setFontSize(16);
-                            doc.text('REKAPITULASI MENGAJAR DAN PRESENSI MAPEL', 14, 20);
-                            doc.setFontSize(10);
-                            doc.text(`Bulan: ${rekapMapelFilter.bulan}`, 14, 28);
-                            
-                            const tableData = filteredRecap.map((a, idx) => {
-                              const classAttendance = attendance.filter(sa => sa.kelas === a.kelas && sa.tanggal === a.tanggal);
-                              return [
-                                idx + 1,
-                                getIndonesianDay(a.tanggal),
-                                a.tanggal,
-                                a.nama,
-                                a.mapel || '-',
-                                a.kelas,
-                                classAttendance.filter(sa => sa.status === 'Hadir').length,
-                                classAttendance.filter(sa => sa.status === 'Sakit').length,
-                                classAttendance.filter(sa => sa.status === 'Izin').length,
-                                classAttendance.filter(sa => sa.status === 'Alfa').length,
-                                classAttendance.length,
-                                'Mengajar'
-                              ];
-                            });
+                           onClick={() => {
+                             const doc = new jsPDF('l', 'mm', 'a4');
+                             doc.setFontSize(16);
+                             doc.text('REKAPITULASI MENGAJAR DAN PRESENSI MAPEL', 14, 20);
+                             doc.setFontSize(10);
+                             doc.text(`Bulan: ${rekapMapelFilter.bulan}`, 14, 28);
+                             
+                             const tableData = filteredRecap.map((a, idx) => {
+                               const classAttendance = attendance.filter(sa => sa.kelas === a.kelas && sa.tanggal === a.tanggal);
+                               const jpTextCol = a.jps && a.jps.length > 0 ? a.jps.map((j: number) => `JP ${j}`).join(', ') : '-';
+                               return [
+                                 idx + 1,
+                                 getIndonesianDay(a.tanggal),
+                                 a.tanggal,
+                                 a.nama,
+                                 a.mapel || '-',
+                                 a.kelas,
+                                 jpTextCol,
+                                 classAttendance.filter(sa => sa.status === 'Hadir').length,
+                                 classAttendance.filter(sa => sa.status === 'Sakit').length,
+                                 classAttendance.filter(sa => sa.status === 'Izin').length,
+                                 classAttendance.filter(sa => sa.status === 'Alfa').length,
+                                 classAttendance.length,
+                                 a.statusKeterangan
+                               ];
+                             });
 
-                            autoTable(doc, {
-                              startY: 35,
-                              head: [['No', 'Hari', 'Tanggal', 'Nama Guru', 'Mapel', 'Kelas', 'H', 'S', 'I', 'A', 'Total', 'Status']],
-                              body: tableData,
-                              theme: 'striped',
-                              headStyles: { fillColor: [22, 101, 52] }
-                            });
-                            doc.save(`Rekap_Mapel_${rekapMapelFilter.bulan}.pdf`);
-                          }}
-                          className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all border border-red-100"
-                       >
-                         <Download size={16} /> PDF
-                       </button>
+                             autoTable(doc, {
+                               startY: 35,
+                               head: [['No', 'Hari', 'Tanggal', 'Nama Guru', 'Mapel', 'Kelas', 'JP', 'H', 'S', 'I', 'A', 'Total', 'Status']],
+                               body: tableData,
+                               theme: 'striped',
+                             });
+
+                             doc.save(`Rekap_Mapel_${rekapMapelFilter.bulan}.pdf`);
+                           }}
+                           className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all border border-red-100"
+                        >
+                          <FileText size={16} /> PDF
+                        </button>
                      </div>
                    </div>
 
@@ -5598,17 +5833,20 @@ export default function App() {
                            <th className="px-6 py-4 text-center">I</th>
                            <th className="px-6 py-4 text-center">A</th>
                            <th className="px-6 py-4 text-center">Detail</th>
-                           <th className="px-6 py-4 text-nowrap">Status</th>
+                            <th className="px-6 py-4 text-center text-nowrap">JP</th>
+                            <th className="px-6 py-4 text-nowrap">Status</th>
                          </tr>
                        </thead>
                        <tbody className="divide-y divide-gray-50">
                          {filteredRecap.map((a, i) => {
                            const classAttendance = attendance.filter(sa => sa.kelas === a.kelas && sa.tanggal === a.tanggal);
-                           const h = classAttendance.filter(sa => sa.status === 'Hadir').length;
-                           const s = classAttendance.filter(sa => sa.status === 'Sakit').length;
-                           const iz = classAttendance.filter(sa => sa.status === 'Izin').length;
-                           const al = classAttendance.filter(sa => sa.status === 'Alfa').length;
-                           return (
+                           
+                            const h = classAttendance.filter(sa => sa.status === 'Hadir').length;
+                            const s = classAttendance.filter(sa => sa.status === 'Sakit').length;
+                            const iz = classAttendance.filter(sa => sa.status === 'Izin').length;
+                            const al = classAttendance.filter(sa => sa.status === 'Alfa').length;
+                            const jpText = a.jps && a.jps.length > 0 ? a.jps.map((j: number) => `JP ${j}`).join(', ') : '-';
+                            return (
                              <tr key={a.id} className="hover:bg-gray-50">
                                <td className="px-6 py-4 text-center text-gray-400 font-bold">{i + 1}</td>
                                <td className="px-6 py-4 font-bold text-zinc-600 text-xs">{getIndonesianDay(a.tanggal)}</td>
@@ -5641,8 +5879,13 @@ export default function App() {
                                     <Eye size={12} strokeWidth={2.5} /> Detail
                                   </button>
                                 </td>
-                               <td className="px-6 py-4 italic text-gray-500 font-medium">Mengajar</td>
-                             </tr>
+                                <td className="px-6 py-4 text-center text-xs font-black text-green-950 font-mono text-nowrap">
+                                  {jpText}
+                                </td>
+                                <td className="px-6 py-4 italic text-gray-400 font-medium whitespace-nowrap">
+                                  {a.statusKeterangan}
+                                </td>
+                              </tr>
                            );
                          })}
                        </tbody>
@@ -5972,8 +6215,7 @@ export default function App() {
                             const schedules = teachingSchedules.filter(ts => ts.nip === t.nip && (rekapFilter.kelas ? ts.kelas === rekapFilter.kelas : true));
                             const [y, m] = rekapFilter.bulan.split('-').map(Number);
                             const totalTarget = schedules.reduce((sum, sch) => {
-                              const occ = countDaysInMonth(y, m - 1, sch.hari, holidays);
-                              return sum + (occ * (Number(sch.targetPertemuan) || 0));
+                              return sum + getEffectiveTargetSessionsForSchedule(sch, y, m - 1, holidays, settings);
                             }, 0);
                             const actual = (teacherAttendanceMap[t.nip] || [])
                               .filter(ta => rekapFilter.kelas ? ta.kelas === rekapFilter.kelas : true)
@@ -6112,35 +6354,148 @@ export default function App() {
                       const dateStr = dateAtDay.toLocaleDateString('en-CA'); 
                       const holiday = holidays.find(h => h.tanggal === dateStr);
                       
+                      const limitJp = s.hari === 'Jumat' ? 6 : 8;
+                      const defaultJps = Array.from({ length: limitJp }, (_, i) => i + 1);
+                      
+                      // Dynamically resolve. If holiday is active, all JPs are automatically inactive (empty array) with holiday description
+                      const resActiveJps = holiday ? [] : (localActiveJps[s.hari] !== undefined ? localActiveJps[s.hari] : (s.activeJps && Array.isArray(s.activeJps) ? s.activeJps : defaultJps));
+                      const resReasonInactive = holiday ? holiday.keterangan : (localReasonInactive[s.hari] !== undefined ? localReasonInactive[s.hari] : (s.reasonInactive || ''));
+                      const resMasuk = localMasuk[s.hari] !== undefined ? localMasuk[s.hari] : (s.masuk || '07:15');
+                      const resPulang = localPulang[s.hari] !== undefined ? localPulang[s.hari] : (s.pulang || '14:00');
+                      
+                      const isDaySaved = savedDaysStatus[s.hari] || 'idle';
+
                       return (
-                        <div key={idx} className={`flex items-center justify-between p-3 rounded-2xl ${holiday ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}>
-                          <div className="flex flex-col">
-                            <span className={`font-bold text-sm ${holiday ? 'text-red-900' : ''}`}>{s.hari}</span>
-                            <span className="text-[8px] text-gray-400 font-black uppercase tracking-widest">{dateAtDay.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                            {holiday && <span className="text-[8px] text-red-600 font-bold uppercase mt-1">LIBUR: {holiday.keterangan}</span>}
-                          </div>
-                          <div className="flex items-center gap-4">
-                            <div className="flex flex-col items-center">
-                              <span className="text-[8px] font-black text-gray-400 uppercase mb-1">Masuk</span>
-                              <input 
-                                type="time" 
-                                defaultValue={s.masuk} 
-                                disabled={s.hari === 'Minggu'}
-                                onBlur={async (e) => { await firestoreService.savePengaturanHari(s.hari, e.target.value, s.pulang); }}
-                                className="bg-white border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-30" 
-                              />
+                        <div key={idx} className={`flex flex-col p-4 rounded-3xl ${holiday ? 'bg-red-50/50 border border-red-100' : 'bg-gray-50/80 border border-gray-100'} gap-3 transition-all hover:bg-white hover:shadow-sm`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex flex-col">
+                              <span className={`font-black text-sm text-zinc-800 ${holiday ? 'text-red-900' : ''}`}>{s.hari}</span>
+                              <span className="text-[8px] text-gray-400 font-black uppercase tracking-widest">{dateAtDay.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                              {holiday && <span className="text-[8px] text-red-600 font-bold uppercase mt-1">LIBUR: {holiday.keterangan}</span>}
                             </div>
-                            <div className="flex flex-col items-center">
-                              <span className="text-[8px] font-black text-gray-400 uppercase mb-1">Pulang</span>
-                              <input 
-                                type="time" 
-                                defaultValue={s.pulang} 
-                                disabled={s.hari === 'Minggu'}
-                                onBlur={async (e) => { await firestoreService.savePengaturanHari(s.hari, s.masuk, e.target.value); }}
-                                className="bg-white border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-30" 
-                              />
+                            <div className="flex items-center gap-4">
+                              <div className="flex flex-col items-center">
+                                <span className="text-[8px] font-black text-gray-400 uppercase mb-1">Masuk</span>
+                                <input 
+                                  type="time" 
+                                  value={resMasuk} 
+                                  disabled={s.hari === 'Minggu' || !!holiday}
+                                  onChange={(e) => {
+                                    setLocalMasuk(prev => ({ ...prev, [s.hari]: e.target.value }));
+                                  }}
+                                  className="bg-white border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-30" 
+                                />
+                              </div>
+                              <div className="flex flex-col items-center">
+                                <span className="text-[8px] font-black text-gray-400 uppercase mb-1">Pulang</span>
+                                <input 
+                                  type="time" 
+                                  value={resPulang} 
+                                  disabled={s.hari === 'Minggu' || !!holiday}
+                                  onChange={(e) => {
+                                    setLocalPulang(prev => ({ ...prev, [s.hari]: e.target.value }));
+                                  }}
+                                  className="bg-white border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-30" 
+                                />
+                              </div>
                             </div>
                           </div>
+
+                          {s.hari !== 'Minggu' && (
+                            <div className="border-t border-gray-100/70 pt-3 mt-1 space-y-3">
+                              {/* Toggle JP Aktif */}
+                              <div>
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mt-1">Atur JP Aktif Hari {s.hari}:</span>
+                                  <div className="flex flex-col items-end gap-1.5">
+                                    <span className="text-[8px] text-green-600 font-bold bg-green-50 px-1.5 py-0.5 rounded-full">{resActiveJps.length} dari {limitJp} JP Aktif</span>
+                                    <button
+                                      type="button"
+                                      disabled={isDaySaved === 'saving' || !!holiday}
+                                      onClick={async () => {
+                                        setSavedDaysStatus(prev => ({ ...prev, [s.hari]: 'saving' }));
+                                        try {
+                                          await firestoreService.savePengaturanHari(s.hari, resMasuk, resPulang, resActiveJps, resReasonInactive, dateStr);
+                                          setSavedDaysStatus(prev => ({ ...prev, [s.hari]: 'saved' }));
+                                          
+                                          // Clear local temporary overrides so it gets loaded from settings state next
+                                          setLocalActiveJps(prev => { const n = { ...prev }; delete n[s.hari]; return n; });
+                                          setLocalReasonInactive(prev => { const n = { ...prev }; delete n[s.hari]; return n; });
+                                          setLocalMasuk(prev => { const n = { ...prev }; delete n[s.hari]; return n; });
+                                          setLocalPulang(prev => { const n = { ...prev }; delete n[s.hari]; return n; });
+                                          
+                                          setTimeout(() => {
+                                            setSavedDaysStatus(prev => ({ ...prev, [s.hari]: 'idle' }));
+                                          }, 2500);
+                                          
+                                          triggerSuccess("BERHASIL", `Pengaturan hari ${s.hari} berhasil disesuaikan.`);
+                                        } catch (err) {
+                                          console.error(err);
+                                          setSavedDaysStatus(prev => ({ ...prev, [s.hari]: 'idle' }));
+                                        }
+                                      }}
+                                      className={`text-[8px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer shadow-sm border ${
+                                        isDaySaved === 'saved'
+                                          ? 'bg-emerald-600 text-white border-emerald-600'
+                                          : isDaySaved === 'saving'
+                                          ? 'bg-zinc-100 text-zinc-400 border-zinc-200 animate-pulse'
+                                          : !!holiday
+                                          ? 'bg-red-100 text-red-400 border-red-200 cursor-not-allowed'
+                                          : 'bg-green-700 hover:bg-green-800 text-white border-green-700'
+                                      }`}
+                                    >
+                                      {isDaySaved === 'saved' ? 'Tersimpan ✓' : isDaySaved === 'saving' ? 'Menyimpan...' : 'Simpan'}
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {Array.from({ length: limitJp }, (_, i) => i + 1).map((jpNum) => {
+                                    const isActive = resActiveJps.includes(jpNum);
+                                    return (
+                                      <button
+                                        key={jpNum}
+                                        type="button"
+                                        disabled={!!holiday}
+                                        onClick={() => {
+                                          let updatedJps: number[];
+                                          if (isActive) {
+                                            updatedJps = resActiveJps.filter(j => j !== jpNum);
+                                          } else {
+                                            updatedJps = [...resActiveJps, jpNum].sort((a, b) => a - b);
+                                          }
+                                          setLocalActiveJps(prev => ({ ...prev, [s.hari]: updatedJps }));
+                                        }}
+                                        className={`w-7 h-7 flex items-center justify-center rounded-lg text-[10px] font-black transition-all ${
+                                          isActive 
+                                            ? 'bg-green-600 text-white shadow-sm hover:bg-green-700' 
+                                            : 'bg-white border border-gray-100 text-gray-400 hover:bg-gray-100'
+                                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                      >
+                                        {jpNum}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Input Keterangan bila JP tidak aktif */}
+                              {resActiveJps.length < limitJp && (
+                                <div className="space-y-1">
+                                  <label className="block text-[9px] font-black text-orange-500 uppercase tracking-widest">Keterangan Kegiatan (Bila JP Tidak Aktif)</label>
+                                  <input 
+                                    type="text"
+                                    placeholder="Misal: Yasinan / Upacara Bendera / Pramuka"
+                                    value={resReasonInactive}
+                                    disabled={!!holiday}
+                                    onChange={(e) => {
+                                      setLocalReasonInactive(prev => ({ ...prev, [s.hari]: e.target.value }));
+                                    }}
+                                    className="w-full bg-orange-50/50 border border-orange-100 rounded-xl px-3 py-1.5 text-xs font-bold text-orange-900 placeholder-orange-300 focus:ring-2 focus:ring-orange-500 outline-none disabled:opacity-75"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -6152,65 +6507,300 @@ export default function App() {
                   <p className="mt-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest text-center italic">* Simpan otomatis saat kursor keluar</p>
                 </div>
 
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="bg-red-100 p-2 rounded-xl text-red-600">
-                      <Calendar size={20} />
+                <div className="space-y-8">
+                  {/* Hari Libur Card */}
+                  <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 animate-fadeIn">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="bg-red-100 p-2 rounded-xl text-red-600">
+                        <Calendar size={20} />
+                      </div>
+                      <h3 className="text-lg font-bold">Hari Libur</h3>
                     </div>
-                    <h3 className="text-lg font-bold">Hari Libur</h3>
-                  </div>
 
-                  <div className="space-y-3 mb-6">
-                    {holidays.map((h, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-4 bg-red-50/50 rounded-2xl border border-red-100">
-                        <div>
-                          <p className="font-black text-red-900 text-sm">{h.keterangan}</p>
-                          <p className="text-xs text-red-400 font-bold">{h.tanggal}</p>
-                        </div>
+                    {/* Tambah Hari Libur Form (di bagian atas) */}
+                    <div className="bg-gray-50/85 p-5 rounded-2xl border-2 border-dashed border-gray-200 mb-6">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1 mb-2">Form Tambah Hari Libur</h4>
+                      <div className="space-y-3">
+                        <input 
+                          type="date" 
+                          value={newLibur.tanggal}
+                          onChange={e => setNewLibur({...newLibur, tanggal: e.target.value})}
+                          className="w-full bg-white border-0 rounded-xl px-4 py-2.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-red-500 outline-none" 
+                        />
+                        <input 
+                          type="text" 
+                          placeholder="Keterangan Hari Libur..." 
+                          value={newLibur.keterangan}
+                          onChange={e => setNewLibur({...newLibur, keterangan: e.target.value})}
+                          className="w-full bg-white border-0 rounded-xl px-4 py-2.5 text-xs font-bold shadow-sm focus:ring-2 focus:ring-red-500 outline-none" 
+                        />
                         <button 
-                          onClick={async () => { await firestoreService.hapusLiburAgenda(h.tanggal); }}
-                          className="text-red-300 hover:text-red-600 p-2"
+                          type="button"
+                          onClick={async () => {
+                            if (!newLibur.tanggal || !newLibur.keterangan) return;
+                            toggleLoader(true);
+                            try {
+                              await firestoreService.saveLiburAgenda(newLibur.tanggal, newLibur.keterangan);
+                              setNewLibur({ tanggal: '', keterangan: '' });
+                              triggerSuccess("BERHASIL", "Hari libur ditambahkan.");
+                            } catch (e) {
+                              alert("Gagal menyimpan.");
+                            } finally {
+                              toggleLoader(false);
+                            }
+                          }}
+                          className="w-full bg-red-600 text-white rounded-xl py-2.5 font-bold hover:bg-red-500 transition-all text-xs cursor-pointer text-center select-none shadow-sm font-bold uppercase tracking-wider"
                         >
-                          <Trash2 size={16} />
+                          Tambah Hari Libur
                         </button>
                       </div>
-                    ))}
+                    </div>
+
+                    {/* Data List (di bagian bawah) */}
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">Daftar Hari Libur Terdaftar</h4>
+                      {holidays.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic font-bold p-2">Belum ada hari libur khusus yang ditambahkan.</p>
+                      ) : (
+                        holidays.map((h, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-4 bg-red-50/50 rounded-2xl border border-red-100 transition-all hover:bg-red-50">
+                            <div>
+                              <p className="font-black text-red-900 text-sm">{h.keterangan}</p>
+                              <p className="text-xs text-red-500/80 font-bold font-mono">{h.tanggal}</p>
+                            </div>
+                            <button 
+                              type="button"
+                              onClick={async () => { 
+                                if (confirm(`Hapus hari libur ${h.keterangan}?`)) {
+                                  toggleLoader(true);
+                                  try {
+                                    await firestoreService.hapusLiburAgenda(h.tanggal);
+                                    triggerSuccess("BERHASIL", "Hari libur berhasil dihapus.");
+                                  } catch (e) {
+                                    alert("Gagal menghapus.");
+                                  } finally {
+                                    toggleLoader(false);
+                                  }
+                                }
+                              }}
+                              className="text-red-400 hover:text-red-600 p-2 cursor-pointer transition-colors"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
 
-                  <div className="bg-gray-50 p-4 rounded-2xl border-2 border-dashed border-gray-200">
-                    <div className="space-y-3">
-                      <input 
-                        type="date" 
-                        value={newLibur.tanggal}
-                        onChange={e => setNewLibur({...newLibur, tanggal: e.target.value})}
-                        className="w-full bg-white border-0 rounded-xl px-4 py-2 text-sm font-bold shadow-sm" 
-                      />
-                      <input 
-                        type="text" 
-                        placeholder="Keterangan Libur" 
-                        value={newLibur.keterangan}
-                        onChange={e => setNewLibur({...newLibur, keterangan: e.target.value})}
-                        className="w-full bg-white border-0 rounded-xl px-4 py-2 text-sm font-bold shadow-sm" 
-                      />
-                      <button 
-                        onClick={async () => {
-                          if (!newLibur.tanggal || !newLibur.keterangan) return;
-                          toggleLoader(true);
-                          try {
-                            await firestoreService.saveLiburAgenda(newLibur.tanggal, newLibur.keterangan);
-                            setNewLibur({ tanggal: '', keterangan: '' });
-                            triggerSuccess("BERHASIL", "Hari libur ditambahkan.");
-                          } catch (e) {
-                            alert("Gagal menyimpan.");
-                          } finally {
-                            toggleLoader(false);
-                          }
-                        }}
-                        className="w-full bg-red-600 text-white rounded-xl py-2 font-bold hover:bg-red-500 transition-all text-xs"
-                      >
-                        Tambah Hari Libur
-                      </button>
+                  {/* Kalender Aktif Card */}
+                  <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 animate-fadeIn">
+                    <div className="flex flex-col gap-4 mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-orange-100 p-2 rounded-xl text-orange-600">
+                          <Calendar size={20} />
+                        </div>
+                        <h3 className="text-lg font-bold">Kalender Pengaturan</h3>
+                      </div>
+
+                      {/* Month Filter */}
+                      <div className="flex items-center justify-between gap-2 bg-gray-50 p-2 rounded-2xl border border-gray-100">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [y, m] = selectedCalendarMonth.split('-').map(Number);
+                            const prevDate = new Date(y, m - 2, 1);
+                            setSelectedCalendarMonth(prevDate.toISOString().slice(0, 7));
+                          }}
+                          className="px-3 py-1.5 hover:bg-gray-200/70 rounded-xl transition-all text-gray-700 cursor-pointer text-xs font-black uppercase tracking-wider"
+                        >
+                          &larr; Prev
+                        </button>
+                        <input
+                          type="month"
+                          value={selectedCalendarMonth}
+                          onChange={e => setSelectedCalendarMonth(e.target.value)}
+                          className="bg-white border border-gray-150 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm text-center text-zinc-800 outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [y, m] = selectedCalendarMonth.split('-').map(Number);
+                            const nextDate = new Date(y, m, 1);
+                            setSelectedCalendarMonth(nextDate.toISOString().slice(0, 7));
+                          }}
+                          className="px-3 py-1.5 hover:bg-gray-200/70 rounded-xl transition-all text-gray-700 cursor-pointer text-xs font-black uppercase tracking-wider"
+                        >
+                          Next &rarr;
+                        </button>
+                      </div>
                     </div>
+
+                    {/* legend */}
+                    <div className="flex flex-wrap gap-4 mb-5 justify-center text-[9px] font-black uppercase tracking-widest text-zinc-400">
+                      <div className="flex items-center gap-1.5 bg-red-50 px-2 py-1 rounded-lg border border-red-100">
+                        <span className="w-2.5 h-2.5 rounded-full bg-red-600 shrink-0"></span>
+                        <span className="text-red-700">Hari Libur</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-orange-50 px-2 py-1 rounded-lg border border-orange-100">
+                        <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0"></span>
+                        <span className="text-orange-700">Pengaturan JP</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                        <span className="w-2.5 h-2.5 rounded-full bg-gray-300 shrink-0"></span>
+                        <span className="text-gray-500">Default Aktif</span>
+                      </div>
+                    </div>
+
+                    {/* Calendar grid representation */}
+                    {(() => {
+                      const [cy, cm] = selectedCalendarMonth.split('-').map(Number);
+                      if (isNaN(cy) || !cm) return null;
+                      
+                      const daysInMonth = new Date(cy, cm, 0).getDate();
+                      const firstDayIndex = new Date(cy, cm - 1, 1).getDay(); // Sunday=0, Monday=1...
+
+                      const weekdays = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+                      const monthHolidays = holidays.filter(h => h.tanggal.startsWith(selectedCalendarMonth));
+                      const monthSettings = settings.filter(s => s.targetDate && s.targetDate.startsWith(selectedCalendarMonth));
+
+                      return (
+                        <div className="space-y-6">
+                          <div>
+                            <div className="grid grid-cols-7 gap-1 text-center mb-2">
+                              {weekdays.map((w, idx) => (
+                                <span key={w} className={`text-[9px] font-black uppercase tracking-wider ${idx === 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                                  {w}
+                                </span>
+                              ))}
+                            </div>
+                            
+                            <div className="grid grid-cols-7 gap-1 bg-gray-50/50 p-2 rounded-2xl border border-gray-100">
+                              {/* Padding cells prior to start of month */}
+                              {Array.from({ length: firstDayIndex }).map((_, padIdx) => (
+                                <div key={`calendar-pad-${padIdx}`} className="aspect-square"></div>
+                              ))}
+
+                              {/* Days map */}
+                              {Array.from({ length: daysInMonth }).map((_, idx) => {
+                                const dayNum = idx + 1;
+                                const dStr = `${selectedCalendarMonth}-${String(dayNum).padStart(2, '0')}`;
+                                const dayIndex = new Date(cy, cm - 1, dayNum).getDay();
+                                const isSunday = dayIndex === 0;
+
+                                const isHolidayMatch = holidays.find(h => h.tanggal === dStr);
+                                const isSpecialJpMatch = settings.find(s => s.targetDate === dStr);
+
+                                let cellClass = "bg-white hover:bg-zinc-100 text-zinc-700 border-zinc-200/80";
+                                let descStr = "";
+
+                                if (isHolidayMatch) {
+                                  cellClass = "bg-red-50 border-red-200 text-red-600 hover:bg-red-100/80";
+                                  descStr = `HARI LIBUR: ${isHolidayMatch.keterangan}`;
+                                } else if (isSunday) {
+                                  cellClass = "bg-red-50/30 border-red-100/50 text-red-400/80 hover:bg-red-50";
+                                  descStr = "Libur Mingguan (Ahad)";
+                                } else if (isSpecialJpMatch) {
+                                  cellClass = "bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100/80";
+                                  const limitJp = dayIndex === 5 ? 6 : 8;
+                                  const activeCount = isSpecialJpMatch.activeJps ? isSpecialJpMatch.activeJps.length : limitJp;
+                                  descStr = `PENGATURAN JP:\n${activeCount} dari ${limitJp} JP Aktif\nKeterangan: ${isSpecialJpMatch.reasonInactive || 'Custom'}`;
+                                }
+
+                                return (
+                                  <div
+                                    key={`calendar-day-${dayNum}`}
+                                    title={descStr || undefined}
+                                    className={`relative aspect-square flex flex-col justify-center items-center rounded-xl border text-xs font-black transition-all cursor-help shadow-sm ${cellClass}`}
+                                  >
+                                    <span>{dayNum}</span>
+                                    
+                                    {/* Indicator Dots */}
+                                    <div className="flex gap-0.5 mt-0.5 h-1">
+                                      {isHolidayMatch && <span className="w-1 h-1 rounded-full bg-red-600"></span>}
+                                      {isSpecialJpMatch && <span className="w-1 h-1 rounded-full bg-orange-600"></span>}
+                                    </div>
+
+                                    {/* Small trash bin icon for deleting custom JP configurations */}
+                                    {isSpecialJpMatch && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setConfirmModal({
+                                            show: true,
+                                            title: "Hapus Pengaturan JP Khusus?",
+                                            message: "Apakah anda ingin menghapus pengaturan jp pada tanggal yang terpilih?",
+                                            onConfirm: async () => {
+                                              toggleLoader(true);
+                                              try {
+                                                await firestoreService.hapusPengaturanHariKhusus(isSpecialJpMatch.hari);
+                                                
+                                                // Reset local states to default immediately in the UI as well
+                                                setLocalActiveJps(prev => { const n = { ...prev }; delete n[isSpecialJpMatch.hari]; return n; });
+                                                setLocalReasonInactive(prev => { const n = { ...prev }; delete n[isSpecialJpMatch.hari]; return n; });
+                                                setLocalMasuk(prev => { const n = { ...prev }; delete n[isSpecialJpMatch.hari]; return n; });
+                                                setLocalPulang(prev => { const n = { ...prev }; delete n[isSpecialJpMatch.hari]; return n; });
+                                                
+                                                triggerSuccess("BERHASIL", `Pengaturan JP khusus tanggal ${dStr} berhasil dihapus.`);
+                                              } catch (err) {
+                                                console.error("Error deleting settings override:", err);
+                                                alert("Gagal menghapus pengaturan khusus.");
+                                              } finally {
+                                                toggleLoader(false);
+                                              }
+                                            }
+                                          });
+                                        }}
+                                        className="absolute top-1 right-1 text-orange-600 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-lg transition-all cursor-pointer z-50 bg-white/90 shadow-[0_2px_6px_rgba(0,0,0,0.15)] active:scale-90 flex items-center justify-center border border-orange-100"
+                                        title="Hapus pengaturan JP khusus"
+                                      >
+                                        <Trash2 size={11} className="text-orange-600 hover:text-red-600 font-bold shrink-0 pointer-events-none" />
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Detail of special events shown in beautiful cards below */}
+                          <div className="pt-4 border-t border-gray-100 space-y-3">
+                            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1 mb-1">Agenda & Pengaturan Bulan Ini</h4>
+                            
+                            {monthHolidays.map((h, hIdx) => (
+                              <div key={`month-holiday-${hIdx}`} className="flex items-center gap-3 p-3 bg-red-50/50 border border-red-100 rounded-2xl animate-slideIn">
+                                <span className="w-2.5 h-2.5 rounded-full bg-red-600 shrink-0"></span>
+                                <div className="text-left">
+                                  <p className="text-xs font-black text-red-900">{h.tanggal} &mdash; {h.keterangan}</p>
+                                  <p className="text-[9px] font-black uppercase text-red-400 tracking-wider">Hari Libur Terdaftar</p>
+                                </div>
+                              </div>
+                            ))}
+
+                            {monthSettings.map((s, sIdx) => {
+                              const limitJp = s.hari === 'Jumat' ? 6 : 8;
+                              const activeCount = s.activeJps ? s.activeJps.length : limitJp;
+                              return (
+                                <div key={`month-setting-${sIdx}`} className="flex items-center gap-3 p-3 bg-orange-50/50 border border-orange-100 rounded-2xl animate-slideIn">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0"></span>
+                                  <div className="text-left">
+                                    <p className="text-xs font-black text-orange-900">{s.targetDate} ({s.hari}) &mdash; {s.reasonInactive || 'Custom JP'}</p>
+                                    <p className="text-[9px] font-black uppercase text-orange-400 tracking-wider">
+                                      Terjadwal: {activeCount} dari {limitJp} JP Aktif (Masuk: {s.masuk}, Pulang: {s.pulang})
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {monthHolidays.length === 0 && monthSettings.length === 0 && (
+                              <p className="text-xs text-gray-400 italic text-center py-4 font-bold uppercase tracking-wider">Tidak ada agenda khusus pada bulan ini.</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

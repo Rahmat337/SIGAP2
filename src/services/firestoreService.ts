@@ -12,7 +12,8 @@ import {
   limit, 
   onSnapshot,
   Timestamp,
-  addDoc
+  addDoc,
+  deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { 
@@ -429,12 +430,12 @@ export const firestoreService = {
     }
   },
 
-  saveTeachingBatch: async (nip: string, namaGuru: string, schedules: {kelas: string, target: number, hari: string}[], mapel: string) => {
+  saveTeachingBatch: async (nip: string, namaGuru: string, schedules: {kelas: string, target: number, hari: string, jps?: number[]}[], mapel: string) => {
     try {
       for (const item of schedules) {
         const id = `${nip}-${item.kelas}-${item.hari}`;
         await setDoc(doc(db, 'teachingSchedules', id), {
-          id, nip, namaGuru, kelas: item.kelas, targetPertemuan: item.target, mapel, hari: item.hari
+          id, nip, namaGuru, kelas: item.kelas, targetPertemuan: item.target, mapel, hari: item.hari, jps: item.jps || []
         });
       }
     } catch (e) {
@@ -467,9 +468,32 @@ export const firestoreService = {
     }
   },
 
-  savePengaturanHari: async (hari: string, masuk: string, pulang: string) => {
+  savePengaturanHari: async (hari: string, masuk: string, pulang: string, activeJps?: number[], reasonInactive?: string, targetDate?: string) => {
     try {
-      await setDoc(doc(db, 'settings', hari), { hari, masuk, pulang });
+      const updateData: any = { hari, masuk, pulang };
+      if (activeJps !== undefined) {
+        updateData.activeJps = activeJps;
+      }
+      if (reasonInactive !== undefined) {
+        updateData.reasonInactive = reasonInactive;
+      }
+      if (targetDate !== undefined) {
+        updateData.targetDate = targetDate;
+      }
+      await setDoc(doc(db, 'settings', hari), updateData, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `settings/${hari}`);
+      throw e;
+    }
+  },
+
+  hapusPengaturanHariKhusus: async (hari: string) => {
+    try {
+      await updateDoc(doc(db, 'settings', hari), {
+        activeJps: deleteField(),
+        reasonInactive: deleteField(),
+        targetDate: deleteField()
+      });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `settings/${hari}`);
       throw e;
