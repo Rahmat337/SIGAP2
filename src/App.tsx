@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   User, School, QrCode, UserPlus, GraduationCap, LayoutGrid, Settings, LogOut, 
-  ChevronRight, ChevronLeft, ClipboardList, FileBarChart, Table as TableIcon, Search, Plus, 
+  ChevronRight, ChevronLeft, ChevronDown, ChevronUp, ClipboardList, FileBarChart, Table as TableIcon, Search, Plus, 
   RefreshCcw, Printer, Download, Eye, EyeOff, Calendar, Clock, Trash2, Edit, Save,
   ArrowLeft, Upload, FileSpreadsheet, BarChart3, Info, CheckCircle2, XCircle, AlertTriangle, AlertCircle,
   Maximize2, CreditCard, Award, ExternalLink, ShieldCheck, Sparkles, Heart, ArrowUpCircle,
@@ -24,6 +24,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as htmlToImage from 'html-to-image';
 import { QRCodeSVG } from 'qrcode.react';
+import JSZip from 'jszip';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   Legend, AreaChart, Area
@@ -259,6 +260,7 @@ export default function App() {
   const [expandedJpDays, setExpandedJpDays] = useState<{[hari: string]: boolean}>({});
   const [currentTime, setCurrentTime] = useState("");
   const [expandedKamadTeacherDetails, setExpandedKamadTeacherDetails] = useState<{[nip: string]: boolean}>({});
+  const [expandedJadwal, setExpandedJadwal] = useState<string[]>([]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -480,6 +482,9 @@ export default function App() {
   } | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [loaderText, setLoaderText] = useState('');
+  const [showMassDownloadConfirm, setShowMassDownloadConfirm] = useState(false);
+  const [massDownloadSiswa, setMassDownloadSiswa] = useState<Student[]>([]);
   const [firebaseConnected, setFirebaseConnected] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [dismissQuotaNotice, setDismissQuotaNotice] = useState(false);
@@ -530,6 +535,7 @@ export default function App() {
   const [filterTanggalAbsensiGuru, setFilterTanggalAbsensiGuru] = useState('');
   const [filterNamaAbsensi, setFilterNamaAbsensi] = useState('');
   const [filterAdminSiswaClass, setFilterAdminSiswaClass] = useState('');
+  const [filterJadwalClass, setFilterJadwalClass] = useState('');
   const [siswaDashboardDate, setSiswaDashboardDate] = useState(new Date().toISOString().split('T')[0]);
 
   const [pagination, setPagination] = useState({
@@ -1817,6 +1823,50 @@ export default function App() {
     );
   };
 
+  const MassDownloadConfirmModal = () => {
+    if (!showMassDownloadConfirm) return null;
+    const filtered = students.filter(s => s.kelas === filterAdminSiswaClass);
+    return (
+      <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <motion.div 
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-sm w-full border border-gray-100"
+        >
+          <div className="flex flex-col items-center text-center">
+            <div className="bg-purple-50 p-4 rounded-3xl text-purple-700 mb-6 scale-110">
+              <Download size={32} />
+            </div>
+            <h3 className="text-xl font-black text-gray-900 mb-2">Unduh Kartu Siswa</h3>
+            <p className="text-sm text-gray-500 font-medium mb-8 leading-relaxed">
+              Apakah Anda yakin ingin mengunduh <strong className="text-purple-700">{filtered.length}</strong> kartu siswa kelas <strong className="text-green-800">{filterAdminSiswaClass}</strong> dalam format ZIP?
+              <span className="block text-xs font-bold text-gray-400 mt-2">Dibutuhkan beberapa detik untuk membuat gambar berkas PDF kartu secara otomatis.</span>
+            </p>
+            <div className="flex gap-3 w-full">
+              <button 
+                onClick={() => setShowMassDownloadConfirm(false)} 
+                className="flex-1 bg-gray-100 text-gray-400 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
+              >
+                Batal
+              </button>
+              <button 
+                onClick={() => {
+                  setShowMassDownloadConfirm(false);
+                  toggleLoader(true);
+                  setLoaderText(`Menyiapkan data kartu kelas ${filterAdminSiswaClass}...`);
+                  setMassDownloadSiswa(filtered);
+                }} 
+                className="flex-1 bg-purple-800 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-purple-200 hover:bg-purple-700 transition-all scale-105"
+              >
+                Unduh (.ZIP)
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    );
+  };
+
   const ResetAbsensiModal = () => {
     if (!resetAbsensiTarget) return null;
     return (
@@ -2550,6 +2600,261 @@ export default function App() {
     downloadAsPDF(`card-kelas-${className}`, `Barcode-Kelas-${className}.pdf`);
   };
 
+  const captureBatchElement = async (el: HTMLElement, elementId: string) => {
+    const originalStyle = el.style.cssText;
+    
+    // Temporarily make it visible and independent for capture
+    el.style.cssText += `
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      z-index: 9999999 !important;
+      display: flex !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      transform: none !important;
+      transition: none !important;
+      pointer-events: none !important;
+      background: white !important;
+      width: fit-content !important;
+      height: fit-content !important;
+      box-shadow: none !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    `;
+
+    try {
+      // Delay to ensure the DOM has rendered the new styles and images
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Force reload images inside for CORS compatibility
+      const images = Array.from(el.querySelectorAll('img'));
+      await Promise.all(images.map(img => {
+        if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
+        return new Promise(resolve => {
+          img.crossOrigin = "anonymous";
+          const src = img.src;
+          if (src) {
+            img.src = ""; // Reset
+            img.src = src; // Re-trigger
+          }
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+          // Safety timeout for image loading
+          setTimeout(() => resolve(false), 3000);
+        });
+      }));
+
+      // Additional small delay for layout stabilization
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      // Try html-to-image first
+      try {
+        const dataUrl = await htmlToImage.toPng(el, {
+          pixelRatio: 2,
+          backgroundColor: '#ffffff',
+          cacheBust: true,
+          style: {
+            transform: 'none',
+            visibility: 'visible',
+            display: 'flex',
+            opacity: '1',
+            margin: '0',
+            padding: '0'
+          }
+        });
+        if (dataUrl && dataUrl.length > 500) {
+          return dataUrl;
+        }
+      } catch (innerErr) {
+        console.warn("Batch html-to-image failed, trying html2canvas...", innerErr);
+      }
+
+      // html2canvas fallback
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(el, {
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        scale: 2,
+        logging: false,
+        onclone: (clonedDoc) => {
+          const win = clonedDoc.defaultView || window;
+          const clonedEl = clonedDoc.getElementById(elementId);
+          if (clonedEl) {
+             clonedEl.style.cssText += "transform: none !important; visibility: visible !important; display: flex !important; opacity: 1 !important; position: static !important; background: white !important;";
+             
+             // Recursively remove oklch/oklab from ALL stylesheets in the clone
+             Array.from(clonedDoc.styleSheets).forEach(sheet => {
+               try {
+                 const rules = sheet.cssRules;
+                 for (let i = rules.length - 1; i >= 0; i--) {
+                   if (rules[i].cssText.includes('oklch') || rules[i].cssText.includes('oklab')) {
+                     sheet.deleteRule(i);
+                   }
+                 }
+               } catch (e) {}
+             });
+
+             const styleTags = clonedDoc.querySelectorAll('style');
+             styleTags.forEach(tag => {
+               try {
+                 tag.innerHTML = tag.innerHTML.replace(/(oklch|oklab)\s*\([^)]+\)/g, '#333333');
+               } catch (e) {}
+             });
+
+             // Recursively find and fix oklch colors in inline/computed styles for elements
+             const allElements = clonedEl.querySelectorAll('*');
+             const canvasHelper = clonedDoc.createElement('canvas'); 
+             const ctx = canvasHelper.getContext('2d');
+             
+             allElements.forEach((child) => {
+               const element = child as HTMLElement;
+               element.style.filter = 'none';
+               element.style.backdropFilter = 'none';
+
+               const props = ['color', 'backgroundColor', 'borderColor', 'outlineColor', 'fill', 'stroke', 'stopColor'];
+               props.forEach(prop => {
+                 let val = '';
+                 try {
+                    val = element.style.getPropertyValue(prop);
+                    if (!val || val.includes('oklch') || val.includes('oklab')) {
+                      const computed = win.getComputedStyle(element);
+                      val = computed.getPropertyValue(prop);
+                    }
+                 } catch (e) {}
+
+                 if (val && (val.includes('oklch') || val.includes('oklab'))) {
+                   let converted = false;
+                   if (ctx) {
+                     try {
+                       ctx.fillStyle = val;
+                       const rgbVal = ctx.fillStyle; 
+                       if (rgbVal && !rgbVal.includes('oklch') && !rgbVal.includes('oklab') && rgbVal !== '#000000') {
+                         element.style.setProperty(prop, rgbVal, 'important');
+                         converted = true;
+                       }
+                     } catch (e) {}
+                   }
+                   if (!converted) {
+                      if (prop === 'color' || prop === 'stroke') element.style.setProperty(prop, '#000000', 'important');
+                      else if (prop === 'backgroundColor' || prop === 'fill') element.style.setProperty(prop, '#ffffff', 'important');
+                      else element.style.setProperty(prop, 'transparent', 'important');
+                   }
+                 }
+               });
+             });
+          }
+        }
+      });
+      
+      return canvas.toDataURL('image/png');
+    } catch (err) {
+      console.error("Batch capture failed using any strategy:", err);
+      try {
+        return await htmlToImage.toPng(el);
+      } catch (finalErr) {
+        return null;
+      }
+    } finally {
+      el.style.cssText = originalStyle;
+    }
+  };
+
+  const downloadMassSiswaKartu = async () => {
+    if (!filterAdminSiswaClass) {
+      alert("Silakan pilih kelas terlebih dahulu pada filter kelas di sebelah kiri untuk mengunduh kartu secara massal.");
+      return;
+    }
+
+    const filtered = students.filter(s => s.kelas === filterAdminSiswaClass);
+    if (filtered.length === 0) {
+      alert(`Tidak ada data siswa untuk kelas ${filterAdminSiswaClass}.`);
+      return;
+    }
+
+    setShowMassDownloadConfirm(true);
+  };
+
+  useEffect(() => {
+    if (massDownloadSiswa.length === 0) return;
+
+    const processBatch = async () => {
+      try {
+        setLoaderText("Memulai rendering kartu...");
+        // Wait 3 seconds for standard react render cycle, background templates, images and barcodes to fully generate in the DOM
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const zip = new JSZip();
+        let successCount = 0;
+
+        for (let i = 0; i < massDownloadSiswa.length; i++) {
+          const student = massDownloadSiswa[i];
+          setLoaderText(`Membuat kartu [${i + 1}/${massDownloadSiswa.length}]: ${student.nama}...`);
+          
+          const elementId = `mass-print-student-card-${student.nisn}`;
+          const el = document.getElementById(elementId);
+          if (el) {
+            const dataUrl = await captureBatchElement(el, elementId);
+            if (dataUrl) {
+              const img = new Image();
+              img.src = dataUrl;
+              await new Promise(r => img.onload = r);
+              
+              const logicalWidth = img.width / 2;
+              const logicalHeight = img.height / 2;
+
+              const pdf = new jsPDF({
+                orientation: logicalWidth > logicalHeight ? 'l' : 'p',
+                unit: 'px',
+                format: [logicalWidth, logicalHeight]
+              });
+
+              pdf.addImage(dataUrl, 'PNG', 0, 0, logicalWidth, logicalHeight);
+              const pdfOutput = pdf.output('arraybuffer');
+              
+              const safeName = student.nama.replace(/[/\\?%*:|"<>]/g, '-');
+              zip.file(`${student.nisn}_${safeName}.pdf`, pdfOutput);
+              successCount++;
+            } else {
+              console.warn(`Could not capture card for student ${student.nama}`);
+            }
+          } else {
+            console.warn(`Element #${elementId} not found in DOM`);
+          }
+        }
+
+        if (successCount > 0) {
+          setLoaderText("Mengompresi semua kartu ke dalam file ZIP...");
+          const content = await zip.generateAsync({ type: 'blob' });
+          
+          const url = URL.createObjectURL(content);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = `Kartu-Siswa-Kelas-${filterAdminSiswaClass}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+          triggerSuccess("BERHASIL UNDUH", `Sukses mengunduh ${successCount} kartu siswa kelas ${filterAdminSiswaClass}.`);
+        } else {
+          alert("Gagal memproses kartu siswa. Elemen tidak terfaktorkan dengan benar.");
+        }
+      } catch (err) {
+        console.error("Batch card download failed:", err);
+        alert("Gagal mengunduh kartu massal.");
+      } finally {
+        setMassDownloadSiswa([]);
+        setLoaderText('');
+        toggleLoader(false);
+      }
+    };
+
+    processBatch();
+  }, [massDownloadSiswa]);
+
   useEffect(() => {
     setLoginNisn('');
     setLoginUser('');
@@ -2837,7 +3142,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-[9999] flex items-center justify-center">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center">
             <RefreshCcw className="animate-spin text-green-700 mb-2" size={32} />
-            <p className="font-bold text-green-900 text-xs uppercase tracking-widest">Sinkronisasi...</p>
+            <p className="font-bold text-green-905 text-xs uppercase tracking-widest">{loaderText || "Sinkronisasi..."}</p>
           </div>
         </div>
       )}
@@ -4220,10 +4525,16 @@ export default function App() {
   }, [classrooms, searchTermKelas]);
 
   const filteredJadwal = useMemo(() => {
-    if (!searchTermJadwal) return teachingSchedules;
-    const s = searchTermJadwal.toLowerCase();
-    return teachingSchedules.filter(ts => ts.namaGuru.toLowerCase().includes(s) || ts.mapel.toLowerCase().includes(s) || ts.kelas.toLowerCase().includes(s));
-  }, [teachingSchedules, searchTermJadwal]);
+    let result = teachingSchedules;
+    if (filterJadwalClass) {
+      result = result.filter(ts => ts.kelas === filterJadwalClass);
+    }
+    if (searchTermJadwal) {
+      const s = searchTermJadwal.toLowerCase();
+      result = result.filter(ts => ts.namaGuru.toLowerCase().includes(s) || ts.mapel.toLowerCase().includes(s) || ts.kelas.toLowerCase().includes(s));
+    }
+    return result;
+  }, [teachingSchedules, searchTermJadwal, filterJadwalClass]);
 
   const filteredTeacherAttendance = useMemo(() => {
     return teacherAttendance.filter(ta => {
@@ -4236,13 +4547,12 @@ export default function App() {
   const groupedJadwal = useMemo(() => {
     const groups: any = {};
     filteredJadwal.forEach(s => {
-      const key = `${s.nip}-${s.mapel || 'N/A'}-${s.kelas}`;
+      const key = `${s.nip}-${s.mapel || 'N/A'}`;
       if (!groups[key]) {
         groups[key] = {
           nip: s.nip,
           namaGuru: s.namaGuru,
           mapel: s.mapel,
-          kelas: s.kelas,
           sessions: []
         };
       }
@@ -4289,7 +4599,7 @@ export default function App() {
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[9999] flex items-center justify-center">
           <div className="flex flex-col items-center">
             <RefreshCcw className="animate-spin text-green-700 mb-4" size={48} />
-            <p className="font-bold text-green-900">Sinkronisasi Data...</p>
+            <p className="font-bold text-green-900">{loaderText || "Sinkronisasi Data..."}</p>
           </div>
         </div>
       )}
@@ -4582,6 +4892,7 @@ export default function App() {
 
                         const todayDateStr = new Date().toLocaleDateString('en-CA');
                         const todaySetting = settings.find(st => st.hari === todayDayName);
+                        const currentHoliday = holidays.find(h => h.tanggal === todayDateStr);
 
                         // Filter only real teachers (not students, not Kamad themselves)
                         const filteredTeachers = teachers.filter(t => t.role !== 'Siswa' && t.nip !== session?.uid);
@@ -4734,7 +5045,15 @@ export default function App() {
                               let teacherStatus: 'HIJAU' | 'MERAH' | 'STANDBY' | 'ABU-ABU' = 'ABU-ABU';
                               let statusLabel = "Tidak Mengajar";
 
-                              if (isTeachingToday) {
+                              if (currentHoliday) {
+                                if (isTeachingToday) {
+                                  teacherStatus = 'ABU-ABU';
+                                  statusLabel = `Hari Libur ${currentHoliday.keterangan}`;
+                                } else {
+                                  teacherStatus = 'ABU-ABU';
+                                  statusLabel = "Tidak Mengajar";
+                                }
+                              } else if (isTeachingToday) {
                                 const nonInactiveDetails = teachDetailList.filter(dt => dt.state !== 'INACTIVE');
                                 
                                 if (teachDetailList.length > 0 && nonInactiveDetails.length === 0) {
@@ -4866,17 +5185,21 @@ export default function App() {
                                           teachDetailList.map((dt, sIdx) => {
                                             const isInactive = dt.state === 'INACTIVE';
                                             return (
-                                              <div key={sIdx} className={`border-b border-zinc-50 last:border-b-0 pb-3 last:pb-0 ${isInactive ? 'opacity-70' : ''}`}>
-                                                <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest leading-none">
-                                                  {dt.mapel} {isInactive && <span className="text-orange-600 font-bold">(NONAKTIF / KEGIATAN)</span>}
+                                              <div key={sIdx} className={`border-b border-zinc-50 last:border-b-0 pb-3 last:pb-0 ${(isInactive || currentHoliday) ? 'opacity-70' : ''}`}>
+                                                <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest leading-none block text-left">
+                                                  {dt.mapel} {currentHoliday ? <span className="text-rose-600 font-bold">(HARI LIBUR)</span> : isInactive ? <span className="text-orange-600 font-bold">(NONAKTIF / KEGIATAN)</span> : null}
                                                 </p>
                                                 
-                                                {isInactive ? (
-                                                  <p className="text-xs font-black text-zinc-500 mt-1">
+                                                {currentHoliday ? (
+                                                  <p className="text-xs font-black text-zinc-500 mt-1 text-left">
+                                                    Hari libur <span className="text-rose-700 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded-md font-extrabold">{currentHoliday.keterangan || "Libur Madrasah"}</span> pada JP <span className="font-mono text-zinc-950 bg-zinc-100 px-1 py-0.5 rounded text-[10px]">{dt.jps.join(', ')}</span> ({dt.startTime} - {dt.endTime})
+                                                  </p>
+                                                ) : isInactive ? (
+                                                  <p className="text-xs font-black text-zinc-500 mt-1 text-left">
                                                     Mengikuti kegiatan <span className="text-orange-700 bg-orange-50 border border-orange-100 px-1.5 py-0.5 rounded-md font-extrabold">{dt.reasonInactive || "Materi Nonaktif"}</span> pada JP <span className="font-mono text-zinc-950 bg-zinc-100 px-1 py-0.5 rounded text-[10px]">{dt.jps.join(', ')}</span> ({dt.startTime} - {dt.endTime})
                                                   </p>
                                                 ) : (
-                                                  <p className="text-xs font-black text-zinc-800 mt-1">
+                                                  <p className="text-xs font-black text-zinc-800 mt-1 text-left">
                                                     Mengajar di Kelas <span className="text-green-700">{dt.kelas}</span>, JP <span className="font-mono text-zinc-950 bg-zinc-100 px-1 py-0.5 rounded text-[10px]">{dt.jps.join(', ')}</span> ({dt.startTime} - {dt.endTime})
                                                   </p>
                                                 )}
@@ -4963,6 +5286,7 @@ export default function App() {
 
                         // Get today's daily setting
                         const todaySetting = settings.find(st => st.hari === todayDayName);
+                        const currentHoliday = holidays.find(h => h.tanggal === todayDateStr);
                         
                         // Sort schedule sequentially based on minimum JP assigned
                         const sortedSchedules = [...myTodaySchedules].sort((a, b) => {
@@ -5006,7 +5330,11 @@ export default function App() {
                               let statusLabel = "Siap Mulai Presensi";
                               let statusBg = "bg-amber-50 border-amber-200 text-amber-700";
 
-                              if (isJpInactive) {
+                              if (currentHoliday) {
+                                buttonStatus = 'inactive';
+                                statusLabel = `Hari Libur: ${currentHoliday.keterangan}`;
+                                statusBg = "bg-rose-50 border-rose-200 text-rose-700 font-extrabold";
+                              } else if (isJpInactive) {
                                 buttonStatus = 'inactive';
                                 statusLabel = todaySetting?.reasonInactive ? `${todaySetting.reasonInactive}` : "Jam Pelajaran Nonaktif";
                                 statusBg = "bg-zinc-100 border-zinc-250 text-zinc-500 font-extrabold";
@@ -5037,7 +5365,9 @@ export default function App() {
                                 <div
                                   key={sched.id}
                                   className={`p-6 rounded-3xl border transition-all flex flex-col justify-between h-full relative overflow-hidden group ${
-                                    isJpInactive
+                                    currentHoliday
+                                      ? 'bg-rose-50/10 border-rose-150 opacity-80'
+                                      : isJpInactive
                                       ? 'bg-zinc-105 border-zinc-200/80 opacity-65'
                                       : isAlreadyAttended
                                       ? 'bg-emerald-50/25 border-emerald-100 hover:bg-emerald-50/40'
@@ -5049,7 +5379,14 @@ export default function App() {
                                   <div>
                                     <div className="flex justify-between items-start mb-4 gap-2">
                                       <div className="flex flex-col gap-1 text-left">
-                                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{sched.mapel || "Mata Pelajaran"} {isJpInactive && <span className="text-orange-600 font-extrabold border border-orange-100 bg-orange-50/50 px-1 py-0.5 rounded text-[8px]">(KEGIATAN)</span>}</span>
+                                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                          {sched.mapel || "Mata Pelajaran"}{" "}
+                                          {currentHoliday ? (
+                                            <span className="text-rose-600 font-extrabold border border-rose-100 bg-rose-50/50 px-1 py-0.5 rounded text-[8px]">(HARI LIBUR)</span>
+                                          ) : isJpInactive ? (
+                                            <span className="text-orange-600 font-extrabold border border-orange-100 bg-orange-50/50 px-1 py-0.5 rounded text-[8px]">(KEGIATAN)</span>
+                                          ) : null}
+                                        </span>
                                         <span className="text-lg font-black text-zinc-900 group-hover:text-green-950 transition-colors">Kelas {sched.kelas}</span>
                                       </div>
                                       <div className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border whitespace-nowrap leading-none ${statusBg}`}>
@@ -5085,6 +5422,16 @@ export default function App() {
                                           </div>
                                         </div>
                                         <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest bg-white border border-emerald-150 px-2 py-0.5 rounded-full shadow-xs">Sesi Valid</span>
+                                      </div>
+                                    ) : currentHoliday ? (
+                                      <div className="bg-rose-50 border border-rose-100/60 rounded-2xl p-3.5 flex items-center gap-3 w-full text-left">
+                                        <div className="w-7 h-7 rounded-lg bg-rose-500 flex items-center justify-center text-white shrink-0 font-bold text-[10px] leading-none">
+                                          🏖️
+                                        </div>
+                                        <div className="text-left font-sans">
+                                          <p className="text-xs font-black text-rose-950 uppercase leading-none">Hari Libur Madrasah</p>
+                                          <p className="text-[10px] font-bold text-rose-700 uppercase tracking-wider mt-1 leading-normal">Hari Libur: {currentHoliday.keterangan || "Libur Madrasah"}</p>
+                                        </div>
                                       </div>
                                     ) : isJpInactive ? (
                                       <div className="bg-orange-50 border border-orange-100/60 rounded-2xl p-3.5 flex items-center gap-3">
@@ -5352,6 +5699,12 @@ export default function App() {
                     className="bg-blue-100 text-blue-600 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase flex items-center gap-2 hover:bg-blue-200 transition-all"
                   >
                     <Upload size={14} /> Import
+                  </button>
+                  <button 
+                    onClick={downloadMassSiswaKartu}
+                    className="bg-purple-800 text-white px-4 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase flex items-center gap-2 hover:bg-purple-700 transition-all shadow-sm"
+                  >
+                    <Download size={14} /> Unduh Kartu
                   </button>
                   <button 
                     onClick={() => setShowNaikKelasModal(true)}
@@ -5644,6 +5997,16 @@ export default function App() {
                       className="w-full bg-white border border-gray-100 rounded-xl py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-green-500" 
                     />
                   </div>
+                  <select
+                    value={filterJadwalClass}
+                    onChange={e => { setFilterJadwalClass(e.target.value); setPagination({...pagination, jadwal: 0}); }}
+                    className="bg-white border border-gray-100 rounded-xl px-4 py-2 text-sm font-semibold text-zinc-600 focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="">Semua Kelas</option>
+                    {classrooms.map(c => (
+                      <option key={c.nama} value={c.nama}>Kelas {c.nama}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex gap-2">
                   <select 
@@ -5665,15 +6028,15 @@ export default function App() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-gray-50 text-gray-400 uppercase text-[10px] font-black tracking-widest border-b border-gray-100">
-                    <tr>
-                      <th className="px-6 py-4 text-center w-12 text-nowrap">No</th>
-                      <th className="px-6 py-4">Guru</th>
-                      <th className="px-6 py-4">Mapel</th>
-                      <th className="px-6 py-4">Kelas</th>
-                      <th className="px-6 py-4">Total Target / Bln</th>
-                      <th className="px-6 py-4 text-center">Aksi</th>
-                    </tr>
-                  </thead>
+                      <tr>
+                        <th className="px-6 py-4 text-center w-12 text-nowrap">No</th>
+                        <th className="px-6 py-4">Guru</th>
+                        <th className="px-6 py-4">Mapel</th>
+                        <th className="px-6 py-4">Kelas</th>
+                        <th className="px-6 py-4">Total Target / Bln</th>
+                        <th className="px-6 py-4 text-center">Aksi</th>
+                      </tr>
+                    </thead>
                     <tbody className="divide-y divide-gray-50">
                     {(() => {
                       const now = new Date();
@@ -5681,65 +6044,169 @@ export default function App() {
                       const month = now.getMonth();
                       
                       return groupedJadwal.slice(pagination.jadwal, pagination.jadwal + pageSize).map((g: any, i) => {
+                        const rowKey = `${g.nip}-${g.mapel || 'N/A'}`;
+                        const isExpanded = expandedJadwal.includes(rowKey);
+                        const uniqueClasses = Array.from(new Set(g.sessions.map((s: any) => s.kelas))).filter(Boolean).sort();
+                        
                         const totalTarget = g.sessions.reduce((sum: number, s: any) => {
                           return sum + getEffectiveTargetSessionsForSchedule(s, year, month, holidays, settings);
                         }, 0);
 
                         return (
-                          <tr key={i}>
-                            <td className="px-6 py-4 text-center font-bold text-gray-400 text-xs">{pagination.jadwal + i + 1}</td>
-                            <td className="px-6 py-4">
-                               <p className="font-bold">{g.namaGuru}</p>
-                               <p className="text-[9px] font-mono font-bold text-gray-400 uppercase">{g.nip}</p>
-                            </td>
-                            <td className="px-6 py-4 font-bold text-green-950 text-xs">{g.mapel || '-'}</td>
-                            <td className="px-6 py-4">
-                               <div className="flex flex-col gap-1">
-                                  <span className="font-bold">{g.kelas}</span>
+                          <React.Fragment key={rowKey}>
+                            <tr className={isExpanded ? 'bg-zinc-50/10' : ''}>
+                              <td className="px-6 py-4 text-center font-bold text-gray-400 text-xs">{pagination.jadwal + i + 1}</td>
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
                                   <button 
-                                    onClick={() => setShowSessionDetail({ name: g.namaGuru, mapping: g.sessions })}
-                                    className="text-[9px] font-black text-blue-600 underline uppercase tracking-tighter text-left"
+                                    onClick={() => {
+                                      setExpandedJadwal(prev => 
+                                        prev.includes(rowKey) ? prev.filter(k => k !== rowKey) : [...prev, rowKey]
+                                      );
+                                    }}
+                                    className="p-1 hover:bg-zinc-50 rounded transition-all cursor-pointer"
+                                    title={isExpanded ? "Sembunyikan kelas" : "Lihat kelas"}
                                   >
-                                    Mengajar di
+                                    {isExpanded ? <ChevronUp size={16} className="text-zinc-500" /> : <ChevronDown size={16} className="text-zinc-400" />}
                                   </button>
-                               </div>
-                            </td>
-                            <td className="px-6 py-4">
-                               <div className="flex flex-col">
+                                  <div>
+                                    <p className="font-bold">{g.namaGuru}</p>
+                                    <p className="text-[9px] font-mono font-bold text-gray-400 uppercase">{g.nip}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 font-bold text-green-950 text-xs">{g.mapel || '-'}</td>
+                              <td className="px-6 py-4">
+                                <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                  {uniqueClasses.map((cl: any) => (
+                                    <span key={cl} className="inline-block bg-green-50 text-green-800 text-[10px] font-black px-2.5 py-0.5 rounded-md border border-green-100/50 uppercase">
+                                      {cl}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="flex flex-col">
                                   <span className="font-black text-green-900">{totalTarget} Pertemuan</span>
                                   <span className="text-[9px] font-bold text-gray-400 italic">Bulan Ini ({new Date().toLocaleDateString('id-ID', { month: 'long' })})</span>
-                               </div>
-                            </td>
-                            <td className="px-6 py-4 text-center text-nowrap">
-                              <div className="flex justify-center gap-3">
-                                 <button onClick={() => { 
-                                   setEditingJadwal({ nip: g.nip, namaGuru: g.namaGuru, mapel: g.mapel } as any); 
-                                   setTeachingSessions(g.sessions.map((s: any) => ({ kelas: s.kelas, hari: s.hari, target: s.targetPertemuan, jps: s.jps || [] })));
-                                   setShowJadwalModal(true); 
-                                 }} className="text-blue-500 hover:bg-blue-50 p-2 rounded-lg transition-all"><Edit size={16} /></button>
-                                 <button onClick={() => { 
-                                   setConfirmModal({
-                                     show: true,
-                                     title: 'Hapus Jam Mengajar?',
-                                     message: 'Seluruh jam mengajar guru untuk mapel ini di kelas ini akan dihapus.',
-                                     entityName: `${g.namaGuru} - ${g.kelas} (${g.mapel})`,
-                                     onConfirm: async () => {
-                                       for (const s of g.sessions) {
-                                         await firestoreService.hapusJadwalMengajar(s.id);
-                                       }
-                                     }
-                                   });
-                                 }} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all"><Trash2 size={16} /></button>
-                              </div>
-                            </td>
-                          </tr>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-center text-nowrap">
+                                <div className="flex justify-center gap-2">
+                                  <button 
+                                    onClick={() => {
+                                      setExpandedJadwal(prev => 
+                                        prev.includes(rowKey) ? prev.filter(k => k !== rowKey) : [...prev, rowKey]
+                                      );
+                                    }}
+                                    className="text-[10px] font-black tracking-wider uppercase text-blue-600 bg-blue-50/50 hover:bg-blue-50 px-3.5 py-2 rounded-xl border border-blue-100/50 transition-all cursor-pointer"
+                                  >
+                                    {isExpanded ? "Tutup" : "Lihat Sesi"}
+                                  </button>
+                                  <button 
+                                    onClick={() => { 
+                                      setConfirmModal({
+                                        show: true,
+                                        title: 'Hapus Seluruh Jadwal?',
+                                        message: `Seluruh (${g.sessions.length}) jadwal mengajar guru ini untuk mapel ${g.mapel} di SEMUA kelas akan dihapus permanen.`,
+                                        entityName: `${g.namaGuru} - ${g.mapel}`,
+                                        onConfirm: async () => {
+                                          for (const s of g.sessions) {
+                                            await firestoreService.hapusJadwalMengajar(s.id);
+                                          }
+                                        }
+                                      });
+                                    }} 
+                                    className="text-red-500 hover:bg-red-50 p-2 border border-transparent hover:border-red-100 rounded-xl transition-all cursor-pointer"
+                                    title="Hapus Semua Kelas/Sesi"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                            
+                            {isExpanded && (
+                              <tr className="bg-zinc-50/20">
+                                <td colSpan={6} className="px-8 py-4 bg-zinc-50/40 border-t border-b border-gray-100">
+                                  <div className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-3">Detail Mengajar per Kelas:</div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {uniqueClasses.map((cls: any) => {
+                                      const classSessions = g.sessions.filter((s: any) => s.kelas === cls);
+                                      const totalClassTarget = classSessions.reduce((sum: number, s: any) => {
+                                        return sum + getEffectiveTargetSessionsForSchedule(s, year, month, holidays, settings);
+                                      }, 0);
+
+                                      return (
+                                        <div key={cls} className="bg-white p-4 rounded-2xl border border-gray-100 flex justify-between items-center shadow-sm hover:border-zinc-200 transition-all">
+                                          <div>
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <span className="text-xs font-black text-green-950 bg-green-50 border border-green-100/50 px-2.5 py-1 rounded-lg">Kelas {cls}</span>
+                                              <span className="text-[10px] text-zinc-400 font-bold">{totalClassTarget} Sesi / Bulan</span>
+                                            </div>
+                                            <div className="space-y-1">
+                                              {classSessions.map((cs: any, idx: number) => (
+                                                <div key={idx} className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-600 font-medium leading-tight">
+                                                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-300"></span>
+                                                  <span className="font-bold text-zinc-850">{cs.hari}</span>
+                                                  {cs.jps && cs.jps.length > 0 && (
+                                                    <span className="text-zinc-400 text-[10px] font-mono font-bold bg-zinc-50 px-1.5 py-0.5 rounded border border-zinc-100">
+                                                      ({cs.jps.map((j: number) => `JP ${j}`).join(', ')})
+                                                    </span>
+                                                  )}
+                                                  <span className="text-[10px] text-zinc-400 font-bold italic">({cs.targetPertemuan} target/bln)</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+
+                                          <div className="flex gap-1.5">
+                                            <button 
+                                              onClick={() => {
+                                                setEditingJadwal({ id: '', nip: g.nip, namaGuru: g.namaGuru, mapel: g.mapel, kelas: cls } as any); 
+                                                setTeachingSessions(classSessions.map((s: any) => ({ kelas: s.kelas, hari: s.hari, target: s.targetPertemuan, jps: s.jps || [] })));
+                                                setShowJadwalModal(true); 
+                                              }} 
+                                              className="text-blue-500 hover:bg-blue-50 p-2 border border-transparent hover:border-blue-100 rounded-xl transition-all h-8 w-8 flex items-center justify-center cursor-pointer"
+                                              title="Edit Jadwal Kelas Ini"
+                                            >
+                                              <Edit size={14} />
+                                            </button>
+                                            <button 
+                                              onClick={() => {
+                                                setConfirmModal({
+                                                  show: true,
+                                                  title: 'Hapus Jam Mengajar Kelas?',
+                                                  message: `Seluruh jam mengajar guru untuk mapel ini di kelas ${cls} akan dihapus.`,
+                                                  entityName: `${g.namaGuru} - Kelas ${cls} (${g.mapel})`,
+                                                  onConfirm: async () => {
+                                                    for (const s of classSessions) {
+                                                      await firestoreService.hapusJadwalMengajar(s.id);
+                                                    }
+                                                  }
+                                                });
+                                              }} 
+                                              className="text-red-500 hover:bg-red-50 p-2 border border-transparent hover:border-red-100 rounded-xl transition-all h-8 w-8 flex items-center justify-center cursor-pointer"
+                                              title="Hapus Jadwal Kelas Ini"
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       });
                     })()}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
                   {groupedJadwal.length > pageSize && (
                 <div className="mt-4 flex justify-end items-center gap-4 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-zinc-900">
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Halaman {Math.floor(pagination.jadwal / pageSize) + 1}</span>
@@ -8970,6 +9437,149 @@ export default function App() {
         <ConfirmModal />
         <ResetAbsensiModal />
         <StudentAttendanceDetailModal />
+        <MassDownloadConfirmModal />
+
+        {/* Off-screen Mass Cards Renderer */}
+        {massDownloadSiswa.length > 0 && (
+          <div style={{ 
+            position: 'fixed', 
+            top: '-9999px', 
+            left: '-9999px', 
+            width: 'auto', 
+            height: 'auto', 
+            pointerEvents: 'none', 
+            zIndex: -9999, 
+            backgroundColor: 'white',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '24px'
+          }}>
+            {massDownloadSiswa.map((student) => {
+              return (
+                <div 
+                  key={student.nisn} 
+                  id={`mass-print-student-card-${student.nisn}`} 
+                  className="flex flex-col md:flex-row gap-4 p-4" 
+                  style={{ width: 'fit-content', backgroundColor: '#f4f4f5', borderRadius: '32px', display: 'flex' }}
+                >
+                  {/* FRONT SIDE */}
+                  <div style={{ 
+                    background: appConfig.cardTemplateUrl ? 'none' : 'linear-gradient(135deg, #14532d 0%, #052e16 100%)', 
+                    color: '#ffffff', 
+                    width: '320px', 
+                    height: '480px', 
+                    borderRadius: '32px', 
+                    position: 'relative', 
+                    overflow: 'hidden', 
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    padding: '40px 24px',
+                    fontFamily: 'Inter, sans-serif',
+                    boxSizing: 'border-box'
+                  }}>
+                    {appConfig.cardTemplateUrl && (
+                      <img 
+                         src={appConfig.cardTemplateUrl} 
+                         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} 
+                         crossOrigin="anonymous" 
+                         alt="Background"
+                      />
+                    )}
+                    {!appConfig.cardTemplateUrl && (
+                      <div style={{ width: '80px', height: '80px', backgroundColor: 'white', borderRadius: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px', marginBottom: '20px', boxShadow: '0 8px 24px rgba(0,0,0,0.2)', zIndex: 10 }}>
+                        <img src={appLogo} style={{ width: '100%', height: '100%', objectFit: 'contain' }} crossOrigin="anonymous" />
+                      </div>
+                    )}
+
+                    <div style={{ textAlign: 'center', marginBottom: '20px', zIndex: 10 }}>
+                      <p style={{ margin: 0, fontSize: '10px', fontWeight: '900', color: '#facc15', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: '3px' }}>KARTU SISWA</p>
+                      <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '900', letterSpacing: '0.05em', textTransform: 'uppercase', lineHeight: '1.2' }}>MTS NEGERI 2 BOMBANA</h3>
+                    </div>
+
+                    <div style={{ width: '110px', height: '165px', borderRadius: '24px', backgroundColor: 'rgba(255,255,255,0.1)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', border: '4px solid rgba(255,255,255,0.1)', zIndex: 20 }}>
+                       {student.foto ? (
+                         <img src={student.foto} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} crossOrigin="anonymous" />
+                       ) : (
+                         <User size={64} style={{ color: 'rgba(255,255,255,0.1)' }} />
+                       )}
+                    </div>
+
+                    <div style={{ width: '100%', zIndex: 30, textAlign: 'center' }}>
+                      <div style={{ marginBottom: '12px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: '900', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Nama Lengkap</span>
+                        <h4 style={{ margin: 0, fontWeight: '900', fontSize: '16px', lineHeight: '1.2', textShadow: '0 2px 4px rgba(0,0,0,0.3)', wordBreak: 'break-word' }}>{student.nama}</h4>
+                        <p style={{ margin: 0, marginTop: '4px', fontSize: '10px', fontWeight: 'normal', color: 'rgba(255,255,255,0.8)', letterSpacing: '0.01em' }}>
+                          {student.tempat || '-'}{student.tgl ? `, ${formatIndoDateNoDay(student.tgl)}` : ''}
+                        </p>
+                      </div>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: '20px' }}>
+                        <div>
+                          <span style={{ fontSize: '9px', fontWeight: '900', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Kelas</span>
+                          <p style={{ margin: 0, fontSize: '14px', fontWeight: '900' }}>{student.kelas}</p>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '9px', fontWeight: '900', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>NISN</span>
+                          <p style={{ margin: 0, fontSize: '14px', fontWeight: '900' }}>{student.nisn}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* BACK SIDE */}
+                  <div style={{ 
+                    background: appConfig.cardTemplateUrl ? 'none' : 'linear-gradient(135deg, #052e16 0%, #14532d 100%)', 
+                    color: '#ffffff', 
+                    width: '320px', 
+                    height: '480px', 
+                    borderRadius: '32px', 
+                    position: 'relative', 
+                    overflow: 'hidden', 
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    padding: '40px 24px',
+                    fontFamily: 'Inter, sans-serif',
+                    justifyContent: 'center',
+                    boxSizing: 'border-box'
+                  }}>
+                    {appConfig.cardTemplateUrl && (
+                      <img 
+                         src={appConfig.cardTemplateUrl} 
+                         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} 
+                         crossOrigin="anonymous" 
+                         alt="Background"
+                      />
+                    )}
+                    <div style={{ marginBottom: '30px', textAlign: 'center', zIndex: 10 }}>
+                      <h4 style={{ fontSize: '14px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>Kartu Presensi Digital</h4>
+                      <div style={{ height: '2px', width: '40px', background: '#16a34a', margin: '0 auto' }}></div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <QRCodeSVG 
+                        value={student.nisn} 
+                        size={150}
+                        level="H"
+                        includeMargin={false}
+                      />
+                    </div>
+                    <p style={{ margin: '15px 0 0 0', fontSize: '14px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#ffffff', textShadow: '0 2px 4px rgba(0,0,0,0.3)', zIndex: 10, textAlign: 'center' }}>
+                      {student.nama}
+                    </p>
+                    <div style={{ marginTop: '20px', textAlign: 'center', padding: '0 20px' }}>
+                      <p style={{ fontSize: '10px', fontWeight: '500', opacity: 0.8, lineHeight: '1.6' }}>
+                        Simpan kartu ini dengan baik. Gunakan barcode di atas untuk melakukan presensi pada mesin yang tersedia di sekolah.
+                      </p>
+                      <p style={{ fontSize: '9px', fontWeight: '900', marginTop: '20px', opacity: 0.4, letterSpacing: '0.2em' }}>MTS NEGERI 2 BOMBANA</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </main>
     </div>
   );
