@@ -93,8 +93,10 @@ service cloud.firestore {
 
     // 2. students
     match /students/{nisn} {
-      allow read: if isTeacherOrAdmin() || (isStudent() && getSession().nisn == nisn);
-      allow write: if isAdmin() && isValidStudent(incoming());
+      allow read: if isTeacherOrAdmin() || (isStudent() && string(getSession().nisn) == string(nisn));
+      allow create: if isTeacherOrAdmin() && isValidStudent(incoming());
+      allow update: if isTeacherOrAdmin() || (isStudent() && string(getSession().nisn) == string(nisn));
+      allow delete: if isAdmin();
     }
 
     // 3. teachers

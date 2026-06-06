@@ -32,6 +32,7 @@ import {
   FileBarChart,
   Table as TableIcon,
   Search,
+  Filter,
   Plus,
   RefreshCcw,
   Printer,
@@ -69,6 +70,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { firestoreService } from "./services/firestoreService";
+import { SiswaBadgesPanel } from "./components/SiswaBadgesPanel";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -120,6 +122,43 @@ import {
   OperationType,
   onQuotaExceeded,
 } from "./lib/firebaseUtils";
+
+const compressImage = (base64Str: string, maxWidth = 340, maxHeight = 340): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.6));
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      resolve(base64Str);
+    };
+  });
+};
 
 const formatIndoDate = (dateStr: string) => {
   if (!dateStr) return "-";
@@ -853,6 +892,8 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [studentProfileClassFilter, setStudentProfileClassFilter] =
     useState("");
+  const [searchTermProfileSiswa, setSearchTermProfileSiswa] = useState("");
+  const [limitProfileSiswa, setLimitProfileSiswa] = useState("");
 
   // Parent Notification Center States for Student Dashboard
   const [parentNotifEnabled, setParentNotifEnabled] = useState(() => {
@@ -1107,7 +1148,7 @@ export default function App() {
 
   // Fetch school-wide counts for fallbacks in user accounts (homeroom teachers / general teachers)
   useEffect(() => {
-    if (!firebaseConnected || !session) {
+    if (!firebaseConnected || !session || session.role === "Siswa") {
       setGlobalSiswaCount(0);
       setGlobalGuruCount(0);
       setGlobalSiswaL(0);
@@ -2945,11 +2986,20 @@ export default function App() {
                     const file = e.target.files?.[0];
                     if (file) {
                       const reader = new FileReader();
-                      reader.onloadend = () => {
-                        setEditingProfileData({
-                          ...data,
-                          foto: reader.result as string,
-                        });
+                      reader.onloadend = async () => {
+                        try {
+                          const compressed = await compressImage(reader.result as string);
+                          setEditingProfileData({
+                            ...data,
+                            foto: compressed,
+                          });
+                        } catch (err) {
+                          console.error("Gagal mengompresi gambar:", err);
+                          setEditingProfileData({
+                            ...data,
+                            foto: reader.result as string,
+                          });
+                        }
                       };
                       reader.readAsDataURL(file);
                     }
@@ -6122,6 +6172,7 @@ export default function App() {
     } else {
       return [
         { id: "siswa-personal", label: "Dashboard Siswa", icon: User },
+        { id: "siswa-badges", label: "Lencana Presensi", icon: Award },
         { id: "siswa-data", label: "Data Siswa", icon: GraduationCap },
       ];
     }
@@ -6738,11 +6789,20 @@ export default function App() {
                         const file = e.target.files?.[0];
                         if (file) {
                           const reader = new FileReader();
-                          reader.onloadend = () => {
-                            setEditingSiswa({
-                              ...(editingSiswa as Student),
-                              foto: reader.result as string,
-                            });
+                          reader.onloadend = async () => {
+                            try {
+                              const compressed = await compressImage(reader.result as string);
+                              setEditingSiswa({
+                                ...(editingSiswa as Student),
+                                foto: compressed,
+                              });
+                            } catch (err) {
+                              console.error("Gagal mengompresi gambar:", err);
+                              setEditingSiswa({
+                                ...(editingSiswa as Student),
+                                foto: reader.result as string,
+                              });
+                            }
                           };
                           reader.readAsDataURL(file);
                         }
@@ -7123,13 +7183,29 @@ export default function App() {
     } else if (waliKelas) {
       filteredStudents = students.filter((s) => s.kelas === waliKelas);
       title = `Profil Siswa Kelas ${waliKelas}`;
-      description = "Daftar siswa dalam perwakilan kelas Anda.";
+      description = "Daftar siswa perwalian kelas Anda.";
     } else {
       return (
         <div className="p-8 text-center text-gray-400">
           Akses Dibatasi. Anda bukan Wali Kelas atau Wakamad.
         </div>
       );
+    }
+
+    // Apply search and filter criteria
+    if (searchTermProfileSiswa.trim()) {
+      const q = searchTermProfileSiswa.trim().toLowerCase();
+      filteredStudents = filteredStudents.filter(
+        (s) =>
+          s.nama.toLowerCase().includes(q) ||
+          s.nisn.toLowerCase().includes(q)
+      );
+    }
+
+    const totalStudentsCount = filteredStudents.length;
+
+    if (limitProfileSiswa) {
+      filteredStudents = filteredStudents.slice(0, Number(limitProfileSiswa));
     }
 
     return (
@@ -7168,11 +7244,41 @@ export default function App() {
             )}
             <div className="text-right bg-green-50 px-6 py-2 rounded-2xl border border-green-100">
               <p className="text-[9px] font-black text-green-600 uppercase tracking-widest mb-1">
-                Total Tampil
+                Total Siswa
               </p>
               <p className="text-xl font-black text-green-800">
-                {filteredStudents.length}
+                {totalStudentsCount}
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Search & Filter Bar styled for high classiness */}
+        <div className="flex flex-col md:flex-row gap-4 items-center bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm">
+          <div className="relative flex-1 w-full">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+            <input
+              type="text"
+              placeholder="Cari nama atau NISN siswa..."
+              value={searchTermProfileSiswa}
+              onChange={(e) => setSearchTermProfileSiswa(e.target.value)}
+              className="w-full bg-zinc-50 border-0 rounded-2xl pl-12 pr-4 py-3 text-xs font-bold text-zinc-700 placeholder-zinc-400 focus:ring-2 focus:ring-green-500 transition-all"
+            />
+          </div>
+          
+          <div className="flex gap-4 w-full md:w-auto">
+            <div className="flex items-center gap-2 bg-zinc-50 px-4 py-3 rounded-2xl border border-zinc-100 w-full md:w-auto">
+              <Filter size={14} className="text-zinc-400" />
+              <select
+                value={limitProfileSiswa}
+                onChange={(e) => setLimitProfileSiswa(e.target.value)}
+                className="bg-transparent border-0 text-xs font-black uppercase tracking-widest focus:ring-0 text-zinc-650 w-full md:min-w-[160px]"
+              >
+                <option value="">Semua Tampilan</option>
+                <option value="10">Tampilan 10</option>
+                <option value="20">Tampilan 20</option>
+                <option value="50">Tampilan 50</option>
+              </select>
             </div>
           </div>
         </div>
@@ -7182,6 +7288,7 @@ export default function App() {
             <table className="w-full text-left text-sm">
               <thead className="bg-zinc-50 text-zinc-400 uppercase text-[10px] font-black tracking-widest border-b border-zinc-100">
                 <tr>
+                  <th className="px-6 py-5 text-center w-16">No</th>
                   <th className="px-8 py-5">Nama Siswa</th>
                   <th className="px-8 py-5">NISN / Kelas</th>
                   <th className="px-8 py-5 text-center">Aksi Pelayanan</th>
@@ -7193,6 +7300,9 @@ export default function App() {
                     key={idx}
                     className="hover:bg-zinc-50 transition-colors group"
                   >
+                    <td className="px-6 py-5 text-center font-bold text-zinc-450 text-xs">
+                      {idx + 1}
+                    </td>
                     <td className="px-8 py-5">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-2xl bg-zinc-100 flex items-center justify-center overflow-hidden border border-zinc-200 group-hover:border-green-300 transition-colors">
@@ -7235,7 +7345,7 @@ export default function App() {
                 ))}
                 {filteredStudents.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="p-20 text-center text-zinc-300">
+                    <td colSpan={4} className="p-20 text-center text-zinc-300">
                       <div className="max-w-xs mx-auto">
                         <GraduationCap
                           size={48}
@@ -12929,10 +13039,16 @@ export default function App() {
                               reader.onloadend = async () => {
                                 toggleLoader(true);
                                 try {
-                                  await firestoreService.saveSiswa({
+                                  // Compress file to safe resolution (<100KB)
+                                  const compressed = await compressImage(reader.result as string);
+                                  const updatedSiswa = {
                                     ...currentSiswaData,
-                                    foto: reader.result as string,
-                                  });
+                                    foto: compressed,
+                                  };
+                                  await firestoreService.saveSiswa(updatedSiswa);
+                                  setStudents((prev) =>
+                                    prev.map((s) => (s.nisn === updatedSiswa.nisn ? updatedSiswa : s))
+                                  );
                                   alert("Foto profile berhasil diunggah!");
                                 } catch (err) {
                                   alert("Gagal mengunggah foto.");
@@ -13091,10 +13207,14 @@ export default function App() {
                         if (!currentSiswaData) return;
                         toggleLoader(true);
                         try {
-                          await firestoreService.saveSiswa({
+                          const updatedSiswa = {
                             ...currentSiswaData,
                             ...biodataForm,
-                          });
+                          };
+                          await firestoreService.saveSiswa(updatedSiswa);
+                          setStudents((prev) =>
+                            prev.map((s) => (s.nisn === updatedSiswa.nisn ? updatedSiswa : s))
+                          );
                           alert("Biodata berhasil diperbarui.");
                         } catch (e) {
                           alert("Gagal memperbarui biodata.");
@@ -15166,15 +15286,15 @@ export default function App() {
                       {!appConfig.cardTemplateUrl && (
                         <div
                           style={{
-                            width: "80px",
-                            height: "80px",
+                            width: "60px",
+                            height: "60px",
                             backgroundColor: "white",
-                            borderRadius: "24px",
+                            borderRadius: "16px",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            padding: "10px",
-                            marginBottom: "20px",
+                            padding: "6px",
+                            marginBottom: "10px",
                             boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
                             zIndex: 10,
                           }}
@@ -15194,7 +15314,7 @@ export default function App() {
                       <div
                         style={{
                           textAlign: "center",
-                          marginBottom: "20px",
+                          marginBottom: "12px",
                           zIndex: 10,
                         }}
                       >
@@ -15228,14 +15348,14 @@ export default function App() {
                       <div
                         style={{
                           width: "110px",
-                          height: "165px",
+                          height: "175px",
                           borderRadius: "24px",
                           backgroundColor: "rgba(255,255,255,0.1)",
                           overflow: "hidden",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          marginBottom: "20px",
+                          marginBottom: "16px",
                           border: "4px solid rgba(255,255,255,0.1)",
                           zIndex: 20,
                         }}
@@ -15514,6 +15634,15 @@ export default function App() {
                 </motion.div>
               </div>
             )}
+
+          {activePanel === "siswa-badges" && (
+            <SiswaBadgesPanel
+              session={session ? { uid: session.uid, name: session.name || "", kelas: session.kelas || "" } : null}
+              attendance={attendance}
+              holidays={holidays}
+              settings={settings}
+            />
+          )}
 
           {activePanel === "siswa-personal" &&
             (() => {
@@ -16118,15 +16247,15 @@ export default function App() {
                             {!appConfig.cardTemplateUrl && (
                               <div
                                 style={{
-                                  width: "80px",
-                                  height: "80px",
+                                  width: "60px",
+                                  height: "60px",
                                   backgroundColor: "white",
-                                  borderRadius: "24px",
+                                  borderRadius: "16px",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
-                                  padding: "10px",
-                                  marginBottom: "20px",
+                                  padding: "6px",
+                                  marginBottom: "10px",
                                   boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
                                   zIndex: 10,
                                 }}
@@ -16146,7 +16275,7 @@ export default function App() {
                             <div
                               style={{
                                 textAlign: "center",
-                                marginBottom: "20px",
+                                marginBottom: "12px",
                                 zIndex: 10,
                               }}
                             >
@@ -16180,14 +16309,14 @@ export default function App() {
                             <div
                               style={{
                                 width: "110px",
-                                height: "165px",
+                                height: "175px",
                                 borderRadius: "24px",
                                 backgroundColor: "rgba(255,255,255,0.1)",
                                 overflow: "hidden",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                marginBottom: "20px",
+                                marginBottom: "16px",
                                 border: "4px solid rgba(255,255,255,0.1)",
                                 zIndex: 20,
                               }}
@@ -16648,15 +16777,15 @@ export default function App() {
                     {!appConfig.cardTemplateUrl && (
                       <div
                         style={{
-                          width: "80px",
-                          height: "80px",
+                          width: "60px",
+                          height: "60px",
                           backgroundColor: "white",
-                          borderRadius: "24px",
+                          borderRadius: "16px",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          padding: "10px",
-                          marginBottom: "20px",
+                          padding: "6px",
+                          marginBottom: "10px",
                           boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
                           zIndex: 10,
                         }}
@@ -16676,7 +16805,7 @@ export default function App() {
                     <div
                       style={{
                         textAlign: "center",
-                        marginBottom: "20px",
+                        marginBottom: "12px",
                         zIndex: 10,
                       }}
                     >
@@ -16710,14 +16839,14 @@ export default function App() {
                     <div
                       style={{
                         width: "110px",
-                        height: "165px",
+                        height: "175px",
                         borderRadius: "24px",
                         backgroundColor: "rgba(255,255,255,0.1)",
                         overflow: "hidden",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        marginBottom: "20px",
+                        marginBottom: "16px",
                         border: "4px solid rgba(255,255,255,0.1)",
                         zIndex: 20,
                       }}
