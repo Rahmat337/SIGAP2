@@ -160,6 +160,59 @@ const compressImage = (base64Str: string, maxWidth = 340, maxHeight = 340): Prom
   });
 };
 
+const triggerSuccessFeedback = () => {
+  try {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContext) {
+      const ctx = new AudioContext();
+      const playBeep = (freq1: number, freq2: number, startTime: number, duration: number, volume: number) => {
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(freq1, startTime);
+        
+        gain1.gain.setValueAtTime(0, startTime);
+        gain1.gain.linearRampToValueAtTime(volume, startTime + 0.02);
+        gain1.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = "triangle";
+        osc2.frequency.setValueAtTime(freq2, startTime);
+        
+        gain2.gain.setValueAtTime(0, startTime);
+        gain2.gain.linearRampToValueAtTime(volume * 0.5, startTime + 0.02);
+        gain2.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        
+        osc1.start(startTime);
+        osc2.start(startTime);
+        osc1.stop(startTime + duration);
+        osc2.stop(startTime + duration);
+      };
+      
+      // Satisfying double deep beep
+      playBeep(210, 315, ctx.currentTime, 0.12, 0.5);
+      playBeep(210, 315, ctx.currentTime + 0.15, 0.18, 0.5);
+    }
+  } catch (e) {
+    console.warn("Audio feedback error:", e);
+  }
+
+  if (navigator.vibrate) {
+    try {
+      navigator.vibrate([150, 100, 150]);
+    } catch (e) {
+      console.warn("Vibration feedback error:", e);
+    }
+  }
+};
+
 const formatIndoDate = (dateStr: string) => {
   if (!dateStr) return "-";
   try {
@@ -3355,11 +3408,7 @@ export default function App() {
                 }
 
                 if (res.success) {
-                  const audio = new Audio(
-                    "https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3",
-                  );
-                  audio.play().catch((e) => console.log("Audio play blocked"));
-                  if (navigator.vibrate) navigator.vibrate(200);
+                  triggerSuccessFeedback();
                   if (scanType === "Kelas") {
                     setClassScanFailCount(0);
                   }
@@ -5960,11 +6009,7 @@ export default function App() {
       }
 
       if (res.success) {
-        const audio = new Audio(
-          "https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3",
-        );
-        audio.play().catch((e) => console.log("Audio play blocked"));
-        if (navigator.vibrate) navigator.vibrate(200);
+        triggerSuccessFeedback();
       }
 
       setScanResult({
@@ -7628,7 +7673,8 @@ export default function App() {
                     Sesi Mengajar (Hari & Target)
                   </label>
                   <button
-                    onClick={() =>
+                    onClick={() => {
+                      setOpenJpDropdown(null);
                       setTeachingSessions([
                         ...teachingSessions,
                         {
@@ -7637,8 +7683,8 @@ export default function App() {
                           target: 2,
                           jps: [],
                         },
-                      ])
-                    }
+                      ]);
+                    }}
                     className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1 hover:text-blue-800 transition-colors"
                   >
                     <Plus size={10} /> Tambah Hari
@@ -7690,7 +7736,7 @@ export default function App() {
                         <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">
                           Jam Pelajaran (JP)
                         </label>
-                        <div className="relative">
+                        <div className="relative jp-dropdown-container">
                           <button
                             type="button"
                             onClick={() =>
@@ -7698,7 +7744,7 @@ export default function App() {
                                 openJpDropdown === idx ? null : idx,
                               )
                             }
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-left flex justify-between items-center gap-1 focus:ring-1 focus:ring-green-500 cursor-pointer min-h-[38px] truncate"
+                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-left flex justify-between items-center gap-1 focus:ring-1 focus:ring-green-500 cursor-pointer min-h-[38px] truncate relative z-50"
                           >
                             <span className="truncate">
                               {session.jps && session.jps.length > 0
@@ -9740,6 +9786,72 @@ export default function App() {
                   )}
                 </div>
 
+                {scanResult && (
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="p-4 rounded-2xl border-2 flex flex-col gap-2 mb-4"
+                    style={{
+                      ...(scanResult.status === "Alfa"
+                        ? {
+                            backgroundColor: "#fff1f2",
+                            borderColor: "#fecdd3",
+                            color: "#9f1239",
+                          }
+                        : scanResult.success
+                          ? {
+                              backgroundColor: "#f0fdf4",
+                              borderColor: "#bbf7d0",
+                              color: "#166534",
+                            }
+                          : {
+                              backgroundColor: "#fef2f2",
+                              borderColor: "#fecaca",
+                              color: "#991b1b",
+                            }),
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center ${scanResult.status === "Alfa" ? "bg-rose-500" : scanResult.success ? "bg-green-500" : "bg-red-500"} text-white`}
+                      >
+                        {scanResult.success ? (
+                          <CheckCircle2 size={16} />
+                        ) : (
+                          <AlertTriangle size={16} />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-bold">
+                          {scanResult.status === "Alfa"
+                            ? "Gagal: Sudah Jam Pulang"
+                            : scanResult.success
+                              ? "Berhasil Terdaftar"
+                              : "Gagal Memproses"}
+                        </p>
+                        <p className="text-xs opacity-75">
+                          {scanResult.message}
+                        </p>
+                      </div>
+                    </div>
+                    {scanResult.success &&
+                      scanResult.message.includes("Terlambat") && (
+                        <div className="bg-orange-500 text-white p-3 rounded-xl flex items-center gap-3 animate-bounce">
+                          <Clock size={20} className="animate-spin-slow" />
+                          <div>
+                            <p className="text-xs font-black uppercase tracking-widest">
+                              Peringatan Terlambat!
+                            </p>
+                            <p className="text-[10px] font-bold">
+                              Waktu Anda akan tercatat dalam akumulasi
+                              keterlambatan.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                  </motion.div>
+                )}
+
                 {scanType !== "Kelas" || classScanFailCount >= 2 ? (
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-1 ml-1">
@@ -9813,72 +9925,6 @@ export default function App() {
                       kelas.
                     </p>
                   </div>
-                )}
-
-                {scanResult && (
-                  <motion.div
-                    initial={{ scale: 0.95, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className={`p-4 rounded-2xl border-2 flex flex-col gap-2`}
-                    style={{
-                      ...(scanResult.status === "Alfa"
-                        ? {
-                            backgroundColor: "#fff1f2",
-                            borderColor: "#fecdd3",
-                            color: "#9f1239",
-                          }
-                        : scanResult.success
-                          ? {
-                              backgroundColor: "#f0fdf4",
-                              borderColor: "#bbf7d0",
-                              color: "#166534",
-                            }
-                          : {
-                              backgroundColor: "#fef2f2",
-                              borderColor: "#fecaca",
-                              color: "#991b1b",
-                            }),
-                    }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center ${scanResult.status === "Alfa" ? "bg-rose-500" : scanResult.success ? "bg-green-500" : "bg-red-500"} text-white`}
-                      >
-                        {scanResult.success ? (
-                          <CheckCircle2 size={16} />
-                        ) : (
-                          <AlertTriangle size={16} />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-bold">
-                          {scanResult.status === "Alfa"
-                            ? "Gagal: Sudah Jam Pulang"
-                            : scanResult.success
-                              ? "Berhasil Terdaftar"
-                              : "Gagal Memproses"}
-                        </p>
-                        <p className="text-xs opacity-75">
-                          {scanResult.message}
-                        </p>
-                      </div>
-                    </div>
-                    {scanResult.success &&
-                      scanResult.message.includes("Terlambat") && (
-                        <div className="bg-orange-500 text-white p-3 rounded-xl flex items-center gap-3 animate-bounce">
-                          <Clock size={20} className="animate-spin-slow" />
-                          <div>
-                            <p className="text-xs font-black uppercase tracking-widest">
-                              Peringatan Terlambat!
-                            </p>
-                            <p className="text-[10px] font-bold">
-                              Waktu Anda akan tercatat dalam akumulasi
-                              keterlambatan.
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                  </motion.div>
                 )}
               </div>
               <p className="mt-4 text-xs text-zinc-400 font-medium">
