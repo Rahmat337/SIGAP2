@@ -524,8 +524,8 @@ const getEffectiveDays = (
 };
 
 const AttendanceChart = ({ data }: { data: any[] }) => (
-  <div className="h-64 w-full">
-    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+  <div className="h-64 w-full relative">
+    <ResponsiveContainer width="100%" height={256}>
       <AreaChart
         data={data}
         margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
@@ -10202,12 +10202,11 @@ export default function App() {
                       ? `Analisis Kehadiran Siswa Kelas ${session.kelas}`
                       : "Analisis Kehadiran Siswa Per Kelas"}
                   </h3>
-                  <div className="h-64 relative">
+                  <div className="h-64 relative w-full">
                     {classrooms.length > 0 ? (
                       <ResponsiveContainer
                         width="100%"
-                        height="100%"
-                        minWidth={0}
+                        height={256}
                       >
                         <BarChart
                           data={classrooms
@@ -10360,12 +10359,11 @@ export default function App() {
                       ? `Analisis Kehadiran Guru Pengajar di ${session.kelas}`
                       : "Analisis Kehadiran Guru"}
                   </h3>
-                  <div className="h-64 relative">
+                  <div className="h-64 relative w-full">
                     {teachers.length > 0 ? (
                       <ResponsiveContainer
                         width="100%"
-                        height="100%"
-                        minWidth={0}
+                        height={256}
                       >
                         <BarChart
                           data={teachers
