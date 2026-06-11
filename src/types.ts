@@ -116,3 +116,16 @@ export interface AppConfig {
   cardTemplateUrl?: string;
   subjects?: string[];
 }
+
+export interface StudentUpdateRequest {
+  id: string;
+  nisn: string;
+  namaSiswa: string;
+  kelas: string;
+  details: string[];
+  oldData: Partial<Student>;
+  newData: Partial<Student>;
+  status: 'pending' | 'approved' | 'rejected';
+  timestamp: string;
+}
+

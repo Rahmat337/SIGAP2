@@ -27,6 +27,12 @@ service cloud.firestore {
        return id is string && id.size() <= 128;
     }
 
+    function isSameNisn(id1, id2) {
+      return string(id1) == string(id2) || 
+             string(id1) == "'" + string(id2) || 
+             "'" + string(id1) == string(id2);
+    }
+
     // Session helpers and role verification
     function hasActiveSession() {
       return isSignedIn() && exists(/databases/$(database)/documents/activeSessions/$(request.auth.uid));
@@ -81,7 +87,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && request.auth.uid == authUid;
       allow create, update: if isSignedIn() && request.auth.uid == authUid && (
         // Student login
-        (incoming().role == 'Siswa' && exists(/databases/$(database)/documents/students/$(incoming().nisn))) ||
+        (incoming().role == 'Siswa' && (exists(/databases/$(database)/documents/students/$(incoming().nisn)) || exists(/databases/$(database)/documents/students/$("'" + incoming().nisn)))) ||
         // Teacher login (verified securely against hashed/private credentials)
         ((incoming().role == 'Guru' || incoming().role == 'Admin') && verifyTeacherPassword(incoming().nip, incoming().pass))
       );
@@ -96,9 +102,9 @@ service cloud.firestore {
 
     // 2. students
     match /students/{nisn} {
-      allow read: if isTeacherOrAdmin() || (isStudent() && string(getSession().nisn) == string(nisn));
+      allow read: if isTeacherOrAdmin() || (isStudent() && isSameNisn(getSession().nisn, nisn));
       allow create: if isTeacherOrAdmin() && isValidStudent(incoming());
-      allow update: if isTeacherOrAdmin() || (isStudent() && string(getSession().nisn) == string(nisn));
+      allow update: if isTeacherOrAdmin() || (isStudent() && isSameNisn(getSession().nisn, nisn));
       allow delete: if isAdmin();
     }
 
@@ -126,7 +132,7 @@ service cloud.firestore {
 
     // 5. attendance
     match /attendance/{id} {
-      allow read: if isTeacherOrAdmin() || (isStudent() && getSession().nisn == resource.data.nisn);
+      allow read: if isTeacherOrAdmin() || (isStudent() && isSameNisn(getSession().nisn, resource.data.nisn));
       allow write: if isTeacherOrAdmin();
     }
 
@@ -170,6 +176,14 @@ service cloud.firestore {
     match /oneTimeTokens/{id} {
       allow read: if isTeacherOrAdmin();
       allow write: if isTeacherOrAdmin();
+    }
+
+    // 13. studentUpdateRequests
+    match /studentUpdateRequests/{id} {
+      allow read: if isTeacherOrAdmin() || (isStudent() && isSameNisn(getSession().nisn, id));
+      allow create: if isStudent() && isSameNisn(getSession().nisn, id) && isSameNisn(getSession().nisn, incoming().nisn);
+      allow update: if isTeacherOrAdmin() || (isStudent() && isSameNisn(getSession().nisn, id));
+      allow delete: if isTeacherOrAdmin() || (isStudent() && isSameNisn(getSession().nisn, id));
     }
   }
 }

@@ -117,9 +117,30 @@
         "schoolName": { "type": "string", "description": "Name of the school" },
         "cardTemplateUrl": { "type": "string", "description": "URL for the student ID card template image" }
       }
+    },
+    "StudentUpdateRequest": {
+      "title": "StudentUpdateRequest",
+      "description": "Student details update pending approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nisn": { "type": "string" },
+        "namaSiswa": { "type": "string" },
+        "kelas": { "type": "string" },
+        "details": { "type": "array" },
+        "oldData": { "type": "object" },
+        "newData": { "type": "object" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "nisn", "namaSiswa", "kelas", "status"]
     }
   },
   "firestore": {
+    "studentUpdateRequests": {
+      "schema": "StudentUpdateRequest",
+      "description": "Collection of student update requests pending wali kelas approval"
+    },
     "students": {
       "schema": "Student",
       "description": "Collection of students"

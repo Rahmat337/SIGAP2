@@ -20,7 +20,8 @@ import { signInAnonymously } from 'firebase/auth';
 import { db, auth, defaultDb } from '../firebase';
 import { 
   Student, Teacher, Classroom, Attendance, TeacherAttendance, 
-  DashboardStats, Holiday, DaySetting, UserSession, Role, TeachingSchedule 
+  DashboardStats, Holiday, DaySetting, UserSession, Role, TeachingSchedule,
+  StudentUpdateRequest
 } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 
@@ -86,50 +87,112 @@ export const firestoreService = {
           return { success: false, message: "Koneksi ke Firebase gagal. Harap refresh halaman.", role: 'Siswa', name: '', uid: '', kelas: '', isWali: false };
         }
         
+        const cleanId = identifier.replace(/^'|'$/g, "").trim();
+        let finalNisnVal = cleanId;
+
         try {
+          // Buat dokumen activeSessions terlebih dahulu agar rules mendeteksi session aktif dengan role 'Siswa'
           await setDoc(doc(db, 'activeSessions', auth.currentUser.uid), {
             uid: auth.currentUser.uid,
-            nisn: identifier,
+            nisn: cleanId,
             role: 'Siswa'
           });
         } catch (sessionErr: any) {
-          console.error("[Auth] Student session write failed:", sessionErr);
-          return { success: false, message: "NISN tidak terdaftar atau bermasalah dengan Server.", role: 'Siswa', name: '', uid: '', kelas: '', isWali: false };
-        }
-
-        const studentDoc = await getDoc(doc(db, 'students', identifier));
-        if (!studentDoc.exists()) {
-          // Clean up the session if student doesn't exist
           try {
-            await deleteDoc(doc(db, 'activeSessions', auth.currentUser.uid));
-          } catch (delErr) {}
-          return { success: false, message: "NISN tidak terdaftar.", role: 'Siswa', name: '', uid: '', kelas: '', isWali: false };
-        }
-        const data = studentDoc.data() as Student;
-        return { success: true, name: data.nama, role: 'Siswa', uid: data.nisn, kelas: data.kelas, isWali: false };
-      } else {
-        // Try looking up the teacher document by NIP (document ID) first
-        const docRef = doc(db, 'teachers', identifier);
-        const docSnap = await getDoc(docRef);
-        let data: Teacher | null = null;
-        let finalNip = "";
-
-        if (docSnap.exists()) {
-          data = docSnap.data() as Teacher;
-          finalNip = docSnap.id;
-        } else {
-          // Fallback to searching by user field
-          const q = query(collection(db, 'teachers'), where('user', '==', identifier));
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            const firstDoc = snapshot.docs[0];
-            data = firstDoc.data() as Teacher;
-            finalNip = firstDoc.id;
+            // Coba fallback dengan karakter kutip jika ID tersimpan demikian di database
+            await setDoc(doc(db, 'activeSessions', auth.currentUser.uid), {
+              uid: auth.currentUser.uid,
+              nisn: "'" + cleanId,
+              role: 'Siswa'
+            });
+            finalNisnVal = "'" + cleanId;
+          } catch (sessionErrFallback: any) {
+            console.error("[Auth] Kedua penulisan session gagal (NISN kemungkinan tidak valid):", sessionErrFallback);
+            return { success: false, message: "NISN salah atau tidak terdaftar.", role: 'Siswa', name: '', uid: '', kelas: '', isWali: false };
           }
         }
 
-        if (!data) {
+        // Setelah session aktif berhasil dibuat, kita memiliki izin untuk membaca data siswa tersebut
+        const studentDocSnap = await getDoc(doc(db, 'students', finalNisnVal));
+        if (!studentDocSnap.exists()) {
+          // Bersihkan session jika data tidak ditemukan demi integritas
+          await deleteDoc(doc(db, 'activeSessions', auth.currentUser.uid));
+          return { success: false, message: "NISN salah atau tidak terdaftar.", role: 'Siswa', name: '', uid: '', kelas: '', isWali: false };
+        }
+
+        const data = studentDocSnap.data() as Student;
+        // Pastikan NISN disesuaikan dengan ID dokumen
+        data.nisn = studentDocSnap.id;
+
+        return { success: true, name: data.nama, role: 'Siswa', uid: data.nisn, kelas: data.kelas, isWali: false };
+      } else {
+        const cleanId = identifier.replace(/^'|'$/g, "").trim();
+        const possibleIds = [cleanId, "'" + cleanId];
+        
+        const candidates: Array<{ nip: string; data: Teacher }> = [];
+
+        // Try getting candidates by NIP first (direct document ID matches)
+        for (const idVal of possibleIds) {
+          try {
+            const docSnap = await getDoc(doc(db, 'teachers', idVal));
+            if (docSnap.exists()) {
+              candidates.push({ nip: docSnap.id, data: docSnap.data() as Teacher });
+            }
+          } catch (err) {
+            console.warn(`[Auth] Direct NIP check skipped for ${idVal}:`, err);
+          }
+        }
+
+        // Try getting candidates by username (user field matches)
+        for (const idVal of possibleIds) {
+          try {
+            const q = query(collection(db, 'teachers'), where('user', '==', idVal));
+            const snapshot = await getDocs(q);
+            snapshot.docs.forEach((doc) => {
+              if (!candidates.some(c => c.nip === doc.id)) {
+                candidates.push({ nip: doc.id, data: doc.data() as Teacher });
+              }
+            });
+          } catch (err) {
+            console.warn(`[Auth] User query check skipped for ${idVal}:`, err);
+          }
+        }
+
+        if (candidates.length === 0) {
           return { success: false, message: "Username atau Password salah.", role: 'Guru', name: '', uid: '', kelas: '', isWali: false };
+        }
+
+        // Identify the candidate that has the matching password to prevent mismatch!
+        let data: Teacher | null = null;
+        let finalNip = "";
+
+        for (const candidate of candidates) {
+          let passMatched = false;
+          
+          if (candidate.data.pass === p) {
+            passMatched = true;
+          } else {
+            try {
+              const passSnap = await getDoc(doc(db, 'teachers', candidate.nip, 'private', 'password'));
+              if (passSnap.exists() && passSnap.data().pass === p) {
+                passMatched = true;
+              }
+            } catch (err) {
+              console.warn(`[Auth] Private password fetch error for ${candidate.nip}:`, err);
+            }
+          }
+
+          if (passMatched) {
+            data = candidate.data;
+            finalNip = candidate.nip;
+            break;
+          }
+        }
+
+        // Fallback to the first candidate if no passwords matched, allowing standard security rules denial
+        if (!data) {
+          data = candidates[0].data;
+          finalNip = candidates[0].nip;
         }
 
         // Ensure finalNip is correct and stored in data
@@ -195,6 +258,25 @@ export const firestoreService = {
       await deleteDoc(doc(db, 'students', nisn));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `students/${nisn}`);
+      throw e;
+    }
+  },
+
+  // Student Update Requests
+  saveStudentUpdateRequest: async (data: StudentUpdateRequest) => {
+    try {
+      await setDoc(doc(db, 'studentUpdateRequests', data.id), data);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `studentUpdateRequests/${data.id}`);
+      throw e;
+    }
+  },
+
+  hapusStudentUpdateRequest: async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'studentUpdateRequests', id));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `studentUpdateRequests/${id}`);
       throw e;
     }
   },

@@ -63,6 +63,7 @@ import {
   ArrowUpCircle,
   BookOpen,
   X,
+  Check,
   FileText,
   CalendarRange,
   Bell,
@@ -101,6 +102,7 @@ import {
   TeacherAttendance,
   AppConfig,
   TeachingSchedule,
+  StudentUpdateRequest,
 } from "./types";
 import { auth, db } from "./firebase";
 import { signInAnonymously } from "firebase/auth";
@@ -643,6 +645,9 @@ const getLocalISO = () => {
 
 export default function App() {
   const [students, setStudents] = useState<Student[]>([]);
+  const [studentUpdateRequests, setStudentUpdateRequests] = useState<
+    StudentUpdateRequest[]
+  >([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -1394,6 +1399,7 @@ export default function App() {
       setSettings([]);
       setHolidays([]);
       setRekapDailyList([]);
+      setStudentUpdateRequests([]);
       return;
     }
 
@@ -1418,6 +1424,7 @@ export default function App() {
     let unsubSettings = () => {};
     let unsubHolidays = () => {};
     let unsubRekapSiswa = () => {};
+    let unsubUpdateRequests = () => {};
 
     // 1. Settings, Holidays & RekapSiswa are lightweight config models, fetch safely
     unsubSettings = onSnapshot(
@@ -1596,8 +1603,32 @@ export default function App() {
       );
     }
 
+    // Subscribe to studentUpdateRequests
+    if (role === "Guru" || role === "Admin") {
+      unsubUpdateRequests = onSnapshot(
+        collection(db, "studentUpdateRequests"),
+        (snap) => {
+          setStudentUpdateRequests(snap.docs.map((d) => d.data() as StudentUpdateRequest));
+        },
+        (error) => handleFirestoreError(error, OperationType.GET, "studentUpdateRequests"),
+      );
+    } else if (role === "Siswa") {
+      unsubUpdateRequests = onSnapshot(
+        doc(db, "studentUpdateRequests", uid),
+        (snap) => {
+          if (snap.exists()) {
+            setStudentUpdateRequests([snap.data() as StudentUpdateRequest]);
+          } else {
+            setStudentUpdateRequests([]);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.GET, `studentUpdateRequests/${uid}`),
+      );
+    }
+
     return () => {
       unsubOwnProfile();
+      unsubUpdateRequests();
       unsubAttendance();
       unsubTeacherAttendance();
       unsubSettings();
@@ -3033,6 +3064,21 @@ export default function App() {
                   <User size={64} />
                 )}
               </div>
+              {data.foto && (
+                <button
+                  type="button"
+                  title="Hapus Foto Profil"
+                  onClick={() => {
+                    setEditingProfileData({
+                      ...data,
+                      foto: "",
+                    });
+                  }}
+                  className="absolute -bottom-2 -left-2 bg-red-600 text-white p-2 rounded-xl shadow-lg border-2 border-white cursor-pointer hover:bg-red-700 transition-colors flex items-center justify-center"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
               <label className="absolute -bottom-2 -right-2 bg-green-600 text-white p-2 rounded-xl shadow-lg border-2 border-white cursor-pointer hover:bg-green-700 transition-colors">
                 <Upload size={16} />
                 <input
@@ -7978,6 +8024,7 @@ export default function App() {
     ayah: "",
     ibu: "",
     hp: "",
+    foto: "",
   });
 
   useEffect(() => {
@@ -7990,6 +8037,7 @@ export default function App() {
         ayah: currentSiswaData.ayah || "",
         ibu: currentSiswaData.ibu || "",
         hp: currentSiswaData.hp || "",
+        foto: currentSiswaData.foto || "",
       });
     }
   }, [currentSiswaData]);
@@ -8474,6 +8522,186 @@ export default function App() {
                   </div>
                 ))}
               </div>
+
+              {/* Permintaan Perubahan Data Siswa (Khusus Wali Kelas atau Admin) */}
+              {(() => {
+                const myClassRequests = studentUpdateRequests.filter((req) => {
+                  if (session?.role === "Admin") return true;
+                  return session?.role === "Guru" && session?.kelas && req.kelas === session.kelas;
+                });
+
+                if (myClassRequests.length === 0) return null;
+
+                return (
+                  <div className="space-y-4 animate-fadeIn">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                      <h3 className="text-xs font-black text-green-950 uppercase tracking-widest flex items-center gap-2">
+                        Permintaan Update Data Siswa ({myClassRequests.length})
+                      </h3>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {myClassRequests.map((req) => (
+                        <div
+                          key={req.id}
+                          className={`p-6 rounded-3xl border shadow-sm transition-all relative overflow-hidden flex flex-col justify-between ${
+                            req.status === 'pending'
+                              ? 'bg-amber-50/60 border-amber-200 text-amber-950'
+                              : req.status === 'approved'
+                                ? 'bg-green-50/60 border-green-200 text-green-950'
+                                : 'bg-red-50/60 border-red-200 text-red-955'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex justify-between items-start mb-4">
+                              <div>
+                                <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border ${
+                                  req.status === 'pending'
+                                    ? 'bg-amber-100 border-amber-300 text-amber-800'
+                                    : req.status === 'approved'
+                                      ? 'bg-green-100 border-green-300 text-green-800'
+                                      : 'bg-red-100 border-red-300 text-red-800'
+                                }`}>
+                                  Kelas {req.kelas}
+                                </span>
+                                <h4 className="text-base font-black text-zinc-900 mt-2">
+                                  {req.namaSiswa}
+                                </h4>
+                                <p className="text-[10px] font-bold text-zinc-450 mt-0.5">
+                                  NISN: {req.nisn}
+                                </p>
+                              </div>
+                              <span className="text-[9px] font-bold text-zinc-400">
+                                {new Date(req.timestamp).toLocaleDateString("id-ID", {
+                                  hour: "2-digit",
+                                  minute: "2-digit"
+                                })}
+                              </span>
+                            </div>
+
+                            <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 border border-zinc-100/50 mb-5">
+                              <p className="text-xs font-bold text-zinc-500 mb-2">Detail Perubahan:</p>
+                              <ul className="space-y-1.5 list-none pl-0">
+                                {req.details.map((detail, dIdx) => (
+                                  <li key={dIdx} className="text-xs text-zinc-800 font-medium flex items-center gap-2 capitalize-first">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                                    {detail}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-3 justify-end pt-3 border-t border-dashed border-zinc-100">
+                            {req.status === 'pending' ? (
+                              <>
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm(`Setujui perubahan data untuk ${req.namaSiswa}?`)) return;
+                                    toggleLoader(true);
+                                    try {
+                                      const compareNisn = (a: string | undefined, b: string | undefined) => {
+                                        if (!a || !b) return false;
+                                        return a.replace(/^'|'$/g, "").trim() === b.replace(/^'|'$/g, "").trim();
+                                      };
+                                      const targetStudent = students.find((s) => compareNisn(s.nisn, req.nisn));
+                                      if (!targetStudent) {
+                                        alert("Siswa tidak ditemukan di database lokal. Pembaruan akan dilakukan di Firestore secara langsung.");
+                                      }
+                                      
+                                      // Build full merged student data
+                                      const approvedSiswa = {
+                                        nisn: req.nisn,
+                                        nama: targetStudent?.nama || req.namaSiswa,
+                                        kelas: targetStudent?.kelas || req.kelas,
+                                        jenisKelamin: targetStudent?.jenisKelamin || 'L',
+                                        tempat: targetStudent?.tempat || '',
+                                        tgl: targetStudent?.tgl || '',
+                                        ayah: targetStudent?.ayah || '',
+                                        ibu: targetStudent?.ibu || '',
+                                        hp: targetStudent?.hp || '',
+                                        ...targetStudent,
+                                        ...req.newData,
+                                      };
+
+                                      // 1. Save changes to student collection (changes student data)
+                                      await firestoreService.saveSiswa(approvedSiswa);
+                                      
+                                      // 2. Delete the request card immediately from Firestore
+                                      await firestoreService.hapusStudentUpdateRequest(req.id);
+
+                                      // 3. Update local states
+                                      setStudents((prev) =>
+                                        prev.map((s) => (compareNisn(s.nisn, req.nisn) ? approvedSiswa : s))
+                                      );
+                                      setStudentUpdateRequests((prev) =>
+                                        prev.filter((r) => r.id !== req.id)
+                                      );
+
+                                      alert(`Selesai! Data ${req.namaSiswa} telah berhasil diperbarui dan permintaan telah diselesaikan.`);
+                                    } catch (err: any) {
+                                      alert("Gagal menyetujui perubahan: " + (err?.message || err));
+                                    } finally {
+                                      toggleLoader(false);
+                                    }
+                                  }}
+                                  className="bg-green-700 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-green-800 transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                                >
+                                  <Check size={14} /> Setujui
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm(`Tolak perubahan data untuk ${req.namaSiswa}?`)) return;
+                                    toggleLoader(true);
+                                    try {
+                                      // Delete the request card immediately from Firestore
+                                      await firestoreService.hapusStudentUpdateRequest(req.id);
+                                      
+                                      // Update local state by removing the rejected card
+                                      setStudentUpdateRequests((prev) =>
+                                        prev.filter((r) => r.id !== req.id)
+                                      );
+                                      alert(`Pembaruan data ${req.namaSiswa} ditolak dan permintaan telah dihapus.`);
+                                    } catch (err: any) {
+                                      alert("Gagal menolak perubahan: " + (err?.message || err));
+                                    } finally {
+                                      toggleLoader(false);
+                                    }
+                                  }}
+                                  className="bg-red-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-700 transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                                >
+                                  <X size={14} /> Tolak
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  toggleLoader(true);
+                                  try {
+                                    await firestoreService.hapusStudentUpdateRequest(req.id);
+                                    setStudentUpdateRequests((prev) =>
+                                      prev.filter((r) => r.id !== req.id)
+                                    );
+                                    alert("Pesan berhasil dihapus.");
+                                  } catch (err: any) {
+                                    alert("Gagal menghapus pesan: " + (err?.message || err));
+                                  } finally {
+                                    toggleLoader(false);
+                                  }
+                                }}
+                                className="bg-zinc-800 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-900 transition-colors cursor-pointer shadow-sm flex items-center gap-1.5 width-full sm:w-auto text-center justify-center"
+                              >
+                                <Trash2 size={14} /> Hapus Pesan
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Quick Menu for Mobile */}
               <div className="md:hidden space-y-4">
@@ -13072,12 +13300,79 @@ export default function App() {
                   </div>
                 </div>
                 <div className="p-8">
+                  {(() => {
+                    const pendingReq = studentUpdateRequests.find((r) => r.nisn === currentSiswaData?.nisn);
+                    if (!pendingReq) return null;
+                    return (
+                      <div className={`mb-6 p-5 rounded-2xl border ${
+                        pendingReq.status === 'pending' 
+                          ? 'bg-amber-50 border-amber-200 text-amber-900' 
+                          : pendingReq.status === 'approved'
+                            ? 'bg-green-50 border-green-200 text-green-900'
+                            : 'bg-red-50 border-red-200 text-red-900'
+                      }`}>
+                        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+                          <div>
+                            <p className="font-bold text-sm">
+                              {pendingReq.status === 'pending' && "⏳ Menunggu Persetujuan Wali Kelas"}
+                              {pendingReq.status === 'approved' && "✅ Permintaan Update Disetujui!"}
+                              {pendingReq.status === 'rejected' && "❌ Permintaan Update Ditolak"}
+                            </p>
+                            <p className="text-xs opacity-75 mt-1 font-semibold">Detail perubahan yang diajukan:</p>
+                            <ul className="list-disc ml-4 text-xs mt-2 space-y-1">
+                              {pendingReq.details.map((detail, dIdx) => (
+                                <li key={dIdx} className="capitalize-first">{detail}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="flex gap-2">
+                            {pendingReq.status !== 'pending' && (
+                              <button
+                                onClick={async () => {
+                                  toggleLoader(true);
+                                  try {
+                                    await firestoreService.hapusStudentUpdateRequest(pendingReq.id);
+                                  } catch (err) {
+                                    alert("Gagal membersihkan riwayat.");
+                                  } finally {
+                                    toggleLoader(false);
+                                  }
+                                }}
+                                className="text-xs bg-white text-zinc-800 py-1.5 px-3 border border-zinc-200 rounded-xl hover:bg-zinc-50 font-bold whitespace-nowrap cursor-pointer shadow-sm"
+                              >
+                                Bersihkan Pesan
+                              </button>
+                            )}
+                            {pendingReq.status === 'pending' && (
+                              <button
+                                onClick={async () => {
+                                  toggleLoader(true);
+                                  try {
+                                    await firestoreService.hapusStudentUpdateRequest(pendingReq.id);
+                                    alert("Permintaan update berhasil dibatalkan.");
+                                  } catch (err) {
+                                    alert("Gagal membatalkan permintaan.");
+                                  } finally {
+                                    toggleLoader(false);
+                                  }
+                                }}
+                                className="text-xs bg-red-600 text-white py-1.5 px-3 rounded-xl hover:bg-red-700 font-bold shadow transition-colors whitespace-nowrap cursor-pointer"
+                              >
+                                Batalkan Pengajuan
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   <div className="flex flex-col items-center mb-8">
                     <div className="relative group">
                       <div className="w-32 h-32 rounded-[2rem] bg-zinc-100 border-4 border-white shadow-lg overflow-hidden flex items-center justify-center">
-                        {currentSiswaData?.foto ? (
+                        {biodataForm.foto ? (
                           <img
-                            src={currentSiswaData.foto}
+                            src={biodataForm.foto}
                             className="w-full h-full object-cover"
                             alt="Profile"
                           />
@@ -13085,7 +13380,22 @@ export default function App() {
                           <User size={64} className="text-zinc-300" />
                         )}
                       </div>
-                      <label className="absolute bottom-0 right-0 p-2 bg-green-800 text-white rounded-xl shadow-lg cursor-pointer hover:bg-green-700 transition-all border-4 border-white">
+                      {biodataForm.foto && (
+                        <button
+                          type="button"
+                          title="Hapus Foto Profil"
+                          onClick={() => {
+                            setBiodataForm((prev) => ({
+                              ...prev,
+                              foto: "",
+                            }));
+                          }}
+                          className="absolute -bottom-2 -left-2 bg-red-600 text-white p-2 rounded-xl shadow-lg border-2 border-white cursor-pointer hover:bg-red-700 transition-colors flex items-center justify-center"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                      <label className="absolute -bottom-2 -right-2 bg-green-850 text-white p-2 rounded-xl shadow-lg border-2 border-white cursor-pointer hover:bg-green-700 transition-colors flex items-center justify-center">
                         <Upload size={16} />
                         <input
                           type="file"
@@ -13100,17 +13410,13 @@ export default function App() {
                                 try {
                                   // Compress file to safe resolution (<100KB)
                                   const compressed = await compressImage(reader.result as string);
-                                  const updatedSiswa = {
-                                    ...currentSiswaData,
+                                  setBiodataForm((prev) => ({
+                                    ...prev,
                                     foto: compressed,
-                                  };
-                                  await firestoreService.saveSiswa(updatedSiswa);
-                                  setStudents((prev) =>
-                                    prev.map((s) => (s.nisn === updatedSiswa.nisn ? updatedSiswa : s))
-                                  );
-                                  alert("Foto profile berhasil diunggah!");
+                                  }));
+                                  alert("Draft foto profil ditambahkan. Silakan klik 'Update Data Siswa' untuk menyimpan.");
                                 } catch (err) {
-                                  alert("Gagal mengunggah foto.");
+                                  alert("Gagal memproses foto.");
                                 } finally {
                                   toggleLoader(false);
                                 }
@@ -13266,22 +13572,79 @@ export default function App() {
                         if (!currentSiswaData) return;
                         toggleLoader(true);
                         try {
-                          const updatedSiswa = {
-                            ...currentSiswaData,
-                            ...biodataForm,
+                          const detailsList: string[] = [];
+                          if (currentSiswaData.nama !== biodataForm.nama) {
+                            detailsList.push(`rubah nama lengkap menjadi ${biodataForm.nama}`);
+                          }
+                          if (currentSiswaData.jenisKelamin !== biodataForm.jenisKelamin) {
+                            const genderName = biodataForm.jenisKelamin === 'L' ? 'Laki-Laki' : 'Perempuan';
+                            detailsList.push(`rubah jenis kelamin menjadi ${genderName}`);
+                          }
+                          if (currentSiswaData.tempat !== biodataForm.tempat) {
+                            detailsList.push(`rubah tempat lahir menjadi ${biodataForm.tempat}`);
+                          }
+                          if (currentSiswaData.tgl !== biodataForm.tgl) {
+                            detailsList.push(`rubah tanggal lahir menjadi ${biodataForm.tgl}`);
+                          }
+                          if (currentSiswaData.ayah !== biodataForm.ayah) {
+                            detailsList.push(`rubah nama ayah menjadi ${biodataForm.ayah || '(dihapus)'}`);
+                          }
+                          if (currentSiswaData.ibu !== biodataForm.ibu) {
+                            detailsList.push(`rubah nama ibu menjadi ${biodataForm.ibu || '(dihapus)'}`);
+                          }
+                          if ((currentSiswaData.foto || "") !== (biodataForm.foto || "")) {
+                            if (!biodataForm.foto) {
+                              detailsList.push("Hapus foto profil");
+                            } else if (!currentSiswaData.foto) {
+                              detailsList.push("tambah foto profil");
+                            } else {
+                              detailsList.push("tambah foto profil");
+                            }
+                          }
+
+                          if (detailsList.length === 0) {
+                            alert("Tidak ada perubahan data.");
+                            return;
+                          }
+
+                          const requestData: StudentUpdateRequest = {
+                            id: currentSiswaData.nisn,
+                            nisn: currentSiswaData.nisn,
+                            namaSiswa: currentSiswaData.nama,
+                            kelas: currentSiswaData.kelas,
+                            details: detailsList,
+                            oldData: {
+                              nama: currentSiswaData.nama || "",
+                              jenisKelamin: currentSiswaData.jenisKelamin || "L",
+                              tempat: currentSiswaData.tempat || "",
+                              tgl: currentSiswaData.tgl || "",
+                              ayah: currentSiswaData.ayah || "",
+                              ibu: currentSiswaData.ibu || "",
+                              foto: currentSiswaData.foto || "",
+                            },
+                            newData: {
+                              nama: biodataForm.nama || "",
+                              jenisKelamin: biodataForm.jenisKelamin as 'L' | 'P',
+                              tempat: biodataForm.tempat || "",
+                              tgl: biodataForm.tgl || "",
+                              ayah: biodataForm.ayah || "",
+                              ibu: biodataForm.ibu || "",
+                              foto: biodataForm.foto || "",
+                            },
+                            status: "pending",
+                            timestamp: new Date().toISOString(),
                           };
-                          await firestoreService.saveSiswa(updatedSiswa);
-                          setStudents((prev) =>
-                            prev.map((s) => (s.nisn === updatedSiswa.nisn ? updatedSiswa : s))
-                          );
-                          alert("Biodata berhasil diperbarui.");
+
+                          await firestoreService.saveStudentUpdateRequest(requestData);
+                          alert("Pengajuan update biodata berhasil dikirim ke Wali Kelas untuk disetujui!");
                         } catch (e) {
+                          console.error("Gagal mengirim file persetujuan update:", e);
                           alert("Gagal memperbarui biodata.");
                         } finally {
                           toggleLoader(false);
                         }
                       }}
-                      className="bg-green-800 text-white px-8 py-3 rounded-2xl font-bold shadow-lg hover:bg-green-700 transition-all flex items-center gap-2"
+                      className="bg-green-800 text-white px-8 py-3 rounded-2xl font-bold shadow-lg hover:bg-green-700 transition-all flex items-center gap-2 cursor-pointer"
                     >
                       <RefreshCcw size={18} /> Update Data Siswa
                     </button>
