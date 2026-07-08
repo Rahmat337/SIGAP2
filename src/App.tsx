@@ -1456,7 +1456,7 @@ export default function App() {
       (error) => handleFirestoreError(error, OperationType.GET, "rekapSiswa"),
     );
 
-    // Real-time synchronization of teacher profile to react instantly to admin role/position/jabatan changes
+    // Real-time synchronization of teacher profile to react instantly to admin role/position/jabatan changes, or student profile
     if (role === "Guru") {
       unsubOwnProfile = onSnapshot(
         doc(db, "teachers", uid),
@@ -1490,6 +1490,18 @@ export default function App() {
           }
         },
         (error) => console.error("Error syncing own profile", error),
+      );
+    } else if (role === "Siswa") {
+      unsubOwnProfile = onSnapshot(
+        doc(db, "students", uid),
+        (snap) => {
+          if (snap.exists()) {
+            setStudents([{ nisn: snap.id, ...snap.data() } as Student]);
+          } else {
+            setStudents([]);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.GET, `students/${uid}`),
       );
     }
 
@@ -3909,18 +3921,29 @@ export default function App() {
               </button>
               <button
                 disabled={modalLoading}
-                onClick={() => {
-                  const doc = new jsPDF("p", "mm", "a4");
-                  doc.setFontSize(14);
-                  doc.text(`DAFTAR PRESENSI SISWA KELAS ${kelas}`, 14, 20);
-                  doc.setFontSize(10);
-                  doc.text(`Mata Pelajaran: ${mapel}`, 14, 26);
-                  doc.text(`Tanggal: ${formatIndoDate(tanggal)}`, 14, 31);
-                  doc.text(`Guru Pengajar: ${namaGuru}`, 14, 36);
+                onClick={async () => {
+                  const doc = new jsPDF("p", "mm", [215, 330]);
+                  toggleLoader(true);
+                  try {
+                    await addKopToDoc(doc, "p");
+                  } catch (e) {
+                    console.error("Error adding KOP:", e);
+                  } finally {
+                    toggleLoader(false);
+                  }
+
+                  doc.setFont("helvetica", "bold");
+                  doc.setFontSize(12);
+                  doc.text(`DAFTAR PRESENSI SISWA KELAS ${kelas}`, 14, 35);
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(9);
+                  doc.text(`Mata Pelajaran: ${mapel}`, 14, 41);
+                  doc.text(`Tanggal: ${formatIndoDate(tanggal)}`, 14, 46);
+                  doc.text(`Guru Pengajar: ${namaGuru}`, 14, 51);
                   doc.text(
                     `Rekapitulasi: Hadir (${h}), Sakit (${s}), Izin (${i}), Alfa (${al})`,
                     14,
-                    41,
+                    56,
                   );
 
                   const tableData = localStudents.map((student, idx) => {
@@ -3937,7 +3960,7 @@ export default function App() {
                   });
 
                   autoTable(doc, {
-                    startY: 46,
+                    startY: 61,
                     head: [
                       ["No", "NISN", "Nama Siswa", "Kehadiran", "Keterangan"],
                     ],
@@ -4223,15 +4246,26 @@ export default function App() {
     };
 
     // Handle PDF download
-    const handleExportPDF = () => {
+    const handleExportPDF = async () => {
       if (modalStudents.length === 0) return;
-      const doc = new jsPDF("l", "mm", "a4");
-      doc.setFontSize(14);
-      doc.text("REKAPITULASI KEHADIRAN SISWA BULANAN", 14, 15);
-      doc.setFontSize(10);
-      doc.text(`Guru Pengajar : ${resolvedTeacherName || "-"}`, 14, 21);
-      doc.text(`Mata Pelajaran : ${mapel} | Kelas: ${kelas}`, 14, 26);
-      doc.text(`Periode Bulan  : ${getMonthYearText(bulan)}`, 14, 31);
+      const doc = new jsPDF("l", "mm", [330, 215]);
+      toggleLoader(true);
+      try {
+        await addKopToDoc(doc, "l");
+      } catch (e) {
+        console.error("Error adding KOP:", e);
+      } finally {
+        toggleLoader(false);
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("REKAPITULASI KEHADIRAN SISWA BULANAN", 14, 35);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(`Guru Pengajar : ${resolvedTeacherName || "-"}`, 14, 41);
+      doc.text(`Mata Pelajaran : ${mapel} | Kelas: ${kelas}`, 14, 46);
+      doc.text(`Periode Bulan  : ${getMonthYearText(bulan)}`, 14, 51);
 
       const headers = [
         "No",
@@ -4282,7 +4316,7 @@ export default function App() {
       });
 
       autoTable(doc, {
-        startY: 37,
+        startY: 56,
         head: [headers],
         body: rows,
         theme: "grid",
@@ -5460,8 +5494,17 @@ export default function App() {
     XLSX.writeFile(wb, `Rekap-${rekapFilter.type}-${rekapFilter.bulan}.xlsx`);
   };
 
-  const exportPDF = () => {
-    const doc = new jsPDF() as any;
+  const exportPDF = async () => {
+    const doc = new jsPDF("p", "mm", [215, 330]) as any;
+    toggleLoader(true);
+    try {
+      await addKopToDoc(doc, "p");
+    } catch (e) {
+      console.error("Error adding KOP:", e);
+    } finally {
+      toggleLoader(false);
+    }
+
     const isSiswa = rekapFilter.type === "Siswa";
     const data = isSiswa
       ? students
@@ -5565,14 +5608,16 @@ export default function App() {
     const classString = rekapFilter.kelas ? ` Kelas ${rekapFilter.kelas}` : "";
     const formattedBulan = getIndonesianMonthYear(rekapFilter.bulan);
 
-    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
     doc.text(
       `Laporan Rekap Kehadiran ${rekapFilter.type}${classString}`,
       14,
-      15,
+      35,
     );
-    doc.setFontSize(10);
-    doc.text(`Bulan: ${formattedBulan}`, 14, 23);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Bulan: ${formattedBulan}`, 14, 41);
 
     const columns = isSiswa
       ? ["No.", "Nama", "Kelas", "H", "I", "S", "A", "Lbt(m)", "%"]
@@ -5590,7 +5635,7 @@ export default function App() {
         ];
 
     autoTable(doc, {
-      startY: 28,
+      startY: 46,
       head: [columns],
       body: data,
     });
@@ -5677,11 +5722,177 @@ export default function App() {
 
   const defaultLogo = "/logo.png";
   const fallbackLogo =
-    "https://www.kemenag.go.id/assets/images/logo-kemenag.png";
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_Kementerian_Agama.png/320px-Logo_Kementerian_Agama.png";
+
+  const compressLogoImage = (file: File, maxW = 300, maxH = 300): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxW) {
+              height = Math.round((height * maxW) / width);
+              width = maxW;
+            }
+          } else {
+            if (height > maxH) {
+              width = Math.round((width * maxH) / height);
+              height = maxH;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            try {
+              const dataUrl = canvas.toDataURL("image/png");
+              resolve(dataUrl);
+            } catch (err) {
+              resolve(event.target?.result as string);
+            }
+          } else {
+            resolve(event.target?.result as string);
+          }
+        };
+        img.onerror = () => {
+          reject(new Error("File bukan merupakan gambar yang valid."));
+        };
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
 
   const appLogo = useMemo(() => {
     return appConfig.logoUrl || defaultLogo;
   }, [appConfig.logoUrl]);
+
+  const appLogoKop = useMemo(() => {
+    return appConfig.logoKopUrl || fallbackLogo;
+  }, [appConfig.logoKopUrl]);
+
+  const loadImageSafely = (src: string): Promise<HTMLImageElement | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = src;
+      img.onload = () => resolve(img);
+      img.onerror = () => {
+        console.warn(`[DEBUG] Failed to load image with CORS: ${src}`);
+        if (src !== fallbackLogo) {
+          const imgFallback = new Image();
+          imgFallback.crossOrigin = "anonymous";
+          imgFallback.src = fallbackLogo;
+          imgFallback.onload = () => resolve(imgFallback);
+          imgFallback.onerror = () => {
+            const imgLocal = new Image();
+            imgLocal.crossOrigin = "anonymous";
+            imgLocal.src = defaultLogo;
+            imgLocal.onload = () => resolve(imgLocal);
+            imgLocal.onerror = () => resolve(null);
+          };
+        } else {
+          const imgLocal = new Image();
+          imgLocal.crossOrigin = "anonymous";
+          imgLocal.src = defaultLogo;
+          imgLocal.onload = () => resolve(imgLocal);
+          imgLocal.onerror = () => resolve(null);
+        }
+      };
+    });
+  };
+
+  const addKopToDoc = async (doc: any, orientation: "p" | "l" = "p") => {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const leftLogoSrc = appConfig.logoKopUrl || fallbackLogo;
+    const rightLogoSrc = appConfig.logoUrl || defaultLogo;
+
+    const [leftImg, rightImg] = await Promise.all([
+      loadImageSafely(leftLogoSrc),
+      loadImageSafely(rightLogoSrc),
+    ]);
+
+    if (leftImg) {
+      try {
+        const origW = leftImg.naturalWidth || leftImg.width || 1;
+        const origH = leftImg.naturalHeight || leftImg.height || 1;
+        const ratio = origW / origH;
+        let w = 18;
+        let h = 18;
+        if (ratio > 1) {
+          w = 18;
+          h = 18 / ratio;
+        } else {
+          h = 18;
+          w = 18 * ratio;
+        }
+        const x = 14 + (18 - w) / 2;
+        const y = 6 + (18 - h) / 2;
+        doc.addImage(leftImg, "PNG", x, y, w, h);
+      } catch (e) {
+        console.error("Failed to add left logo to PDF", e);
+      }
+    }
+
+    if (rightImg) {
+      try {
+        const origW = rightImg.naturalWidth || rightImg.width || 1;
+        const origH = rightImg.naturalHeight || rightImg.height || 1;
+        const ratio = origW / origH;
+        let w = 18;
+        let h = 18;
+        if (ratio > 1) {
+          w = 18;
+          h = 18 / ratio;
+        } else {
+          h = 18;
+          w = 18 * ratio;
+        }
+        const x = (pageWidth - 14 - 18) + (18 - w) / 2;
+        const y = 6 + (18 - h) / 2;
+        doc.addImage(rightImg, "PNG", x, y, w, h);
+      } catch (e) {
+        console.error("Failed to add right logo to PDF", e);
+      }
+    }
+
+    doc.setTextColor(0, 0, 0);
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("KEMENTERIAN AGAMA REPUBLIK INDONESIA", pageWidth / 2, 10, { align: "center" });
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("KEMENTERIAN AGAMA KABUPATEN BOMBANA", pageWidth / 2, 15, { align: "center" });
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("MADRASAH TSANAWIAYAH NEGERI 2 BOMBANA", pageWidth / 2, 20, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(
+      "Jl. Sultan Hasanuddin, Kel. Lauru, Kec. Rumbia Tengah, Kab. Bombana, Sultra (93771), mtsn2bombana@gmail.com",
+      pageWidth / 2,
+      24,
+      { align: "center" }
+    );
+
+    doc.setLineWidth(0.8);
+    doc.line(14, 26, pageWidth - 14, 26);
+    doc.setLineWidth(0.2);
+    doc.line(14, 27, pageWidth - 14, 27);
+  };
 
   const dayOrder: any = {
     Senin: 1,
@@ -5816,9 +6027,9 @@ export default function App() {
               className="w-full h-full object-contain relative z-10"
               onError={(e) => {
                 const target = e.currentTarget;
-                if (target.src === defaultLogo) {
+                if (target.src.endsWith(defaultLogo) || target.src.includes("/logo.png")) {
                   target.src = fallbackLogo;
-                } else if (target.src === fallbackLogo) {
+                } else if (target.src === fallbackLogo || target.src.endsWith(fallbackLogo)) {
                   target.style.opacity = "0";
                   const parent = target.parentElement;
                   if (parent) {
@@ -6283,9 +6494,9 @@ export default function App() {
             className="w-full h-full object-contain relative z-10"
             onError={(e) => {
               const target = e.currentTarget;
-              if (target.src === defaultLogo) {
+              if (target.src.endsWith(defaultLogo) || target.src.includes("/logo.png")) {
                 target.src = fallbackLogo;
-              } else if (target.src === fallbackLogo) {
+              } else if (target.src === fallbackLogo || target.src.endsWith(fallbackLogo)) {
                 target.style.opacity = "0";
                 const parent = target.parentElement;
                 if (parent) {
@@ -8234,9 +8445,9 @@ export default function App() {
                     className="w-full h-full object-contain relative z-10"
                     onError={(e) => {
                       const target = e.currentTarget;
-                      if (target.src === defaultLogo) {
+                      if (target.src.endsWith(defaultLogo) || target.src.includes("/logo.png")) {
                         target.src = fallbackLogo;
-                      } else if (target.src === fallbackLogo) {
+                      } else if (target.src === fallbackLogo || target.src.endsWith(fallbackLogo)) {
                         target.style.opacity = "0";
                         const parent = target.parentElement;
                         if (parent) {
@@ -8612,17 +8823,17 @@ export default function App() {
                                       
                                       // Build full merged student data
                                       const approvedSiswa = {
-                                        nisn: req.nisn,
-                                        nama: targetStudent?.nama || req.namaSiswa,
-                                        kelas: targetStudent?.kelas || req.kelas,
-                                        jenisKelamin: targetStudent?.jenisKelamin || 'L',
-                                        tempat: targetStudent?.tempat || '',
-                                        tgl: targetStudent?.tgl || '',
-                                        ayah: targetStudent?.ayah || '',
-                                        ibu: targetStudent?.ibu || '',
-                                        hp: targetStudent?.hp || '',
+                                        nama: req.namaSiswa,
+                                        kelas: req.kelas,
+                                        jenisKelamin: 'L',
+                                        tempat: '',
+                                        tgl: '',
+                                        ayah: '',
+                                        ibu: '',
+                                        hp: '',
                                         ...targetStudent,
                                         ...req.newData,
+                                        nisn: req.id, // Forcing exact original document ID!
                                       };
 
                                       // 1. Save changes to student collection (changes student data)
@@ -12980,19 +13191,30 @@ export default function App() {
                           <CalendarRange size={16} /> Rekap Absensi
                         </button>
                         <button
-                          onClick={() => {
-                            const doc = new jsPDF("l", "mm", "a4");
-                            doc.setFontSize(16);
+                          onClick={async () => {
+                            const doc = new jsPDF("l", "mm", [330, 215]);
+                            toggleLoader(true);
+                            try {
+                              await addKopToDoc(doc, "l");
+                            } catch (e) {
+                              console.error("Error adding KOP:", e);
+                            } finally {
+                              toggleLoader(false);
+                            }
+
+                            doc.setFont("helvetica", "bold");
+                            doc.setFontSize(12);
                             doc.text(
                               "REKAPITULASI MENGAJAR DAN PRESENSI MAPEL",
                               14,
-                              20,
+                              35,
                             );
-                            doc.setFontSize(10);
+                            doc.setFont("helvetica", "normal");
+                            doc.setFontSize(9);
                             doc.text(
                               `Bulan: ${rekapMapelFilter.bulan}`,
                               14,
-                              28,
+                              41,
                             );
 
                             const tableData = filteredRecap.map((a, idx) => {
@@ -13015,7 +13237,7 @@ export default function App() {
                             });
 
                             autoTable(doc, {
-                              startY: 35,
+                              startY: 46,
                               head: [
                                 [
                                   "No",
@@ -15244,86 +15466,86 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                     <div className="space-y-6">
                       {/* Logo Section */}
-                      <div>
-                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">
-                          Logo Aplikasi (Sekolah)
-                        </label>
+                      <div className="space-y-6">
+                        <div>
+                          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">
+                            Logo Aplikasi (Kanan KOP)
+                          </label>
 
-                        <div className="flex flex-col gap-3 mb-4">
-                          <input
-                            type="text"
-                            placeholder="Link Logo (URL)..."
-                            defaultValue={appConfig.logoUrl || ""}
-                            onBlur={async (e) => {
-                              toggleLoader(true);
-                              await setDoc(
-                                doc(db, "appConfig", "general"),
-                                { logoUrl: e.target.value },
-                                { merge: true },
-                              );
-                              toggleLoader(false);
-                            }}
-                            className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-6 p-6 bg-gray-50 rounded-[2rem] border border-gray-100 group relative">
-                          <div className="w-24 h-24 bg-white rounded-[1.5rem] flex items-center justify-center shadow-lg overflow-hidden p-2 border-4 border-white transition-transform group-hover:scale-105 relative">
-                            <img
-                              src={appLogo}
-                              alt="Preview"
-                              className="w-full h-full object-contain relative z-10"
-                              onError={(e) => {
-                                console.error(
-                                  "[DEBUG] Logo load error (Settings Preview):",
-                                  e.currentTarget.src,
+                          <div className="flex flex-col gap-3 mb-4">
+                            <input
+                              type="text"
+                              placeholder="Link Logo (URL)..."
+                              defaultValue={appConfig.logoUrl || ""}
+                              onBlur={async (e) => {
+                                toggleLoader(true);
+                                await setDoc(
+                                  doc(db, "appConfig", "general"),
+                                  { logoUrl: e.target.value },
+                                  { merge: true },
                                 );
-                                if (
-                                  e.currentTarget.src !== fallbackLogo &&
-                                  !e.currentTarget.src.includes("/logo.png")
-                                ) {
-                                  e.currentTarget.src = fallbackLogo;
-                                } else {
-                                  e.currentTarget.style.opacity = "0";
-                                  const parent = e.currentTarget.parentElement;
-                                  if (parent) {
-                                    const icon =
-                                      parent.querySelector(".fallback-icon");
-                                    if (icon)
-                                      (icon as HTMLElement).style.opacity = "1";
-                                  }
-                                }
+                                toggleLoader(false);
                               }}
-                            />
-                            <School
-                              size={36}
-                              className="text-green-700 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 fallback-icon transition-opacity"
+                              className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold w-full"
                             />
                           </div>
-                          <div className="flex-1 space-y-3">
-                            <p className="text-[10px] text-gray-400 font-medium">
-                              Gunakan gambar transparan (PNG) untuk hasil
-                              terbaik.
-                            </p>
-                            <label className="inline-block bg-green-800 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-green-700 cursor-pointer transition-all">
-                              Pilih Gambar
-                              <input
-                                type="file"
-                                className="hidden"
-                                accept="image/*"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    const reader = new FileReader();
-                                    reader.onloadend = async () => {
+
+                          <div className="flex items-center gap-6 p-6 bg-gray-50 rounded-[2rem] border border-gray-100 group relative">
+                            <div className="w-24 h-24 bg-white rounded-[1.5rem] flex items-center justify-center shadow-lg overflow-hidden p-2 border-4 border-white transition-transform group-hover:scale-105 relative">
+                              <img
+                                src={appLogo}
+                                alt="Preview"
+                                className="w-full h-full object-contain relative z-10"
+                                onError={(e) => {
+                                  console.error(
+                                    "[DEBUG] Logo load error (Settings Preview):",
+                                    e.currentTarget.src,
+                                  );
+                                  const target = e.currentTarget;
+                                  if (
+                                    target.src !== fallbackLogo &&
+                                    !target.src.endsWith(fallbackLogo) &&
+                                    !target.src.endsWith("/logo.png")
+                                  ) {
+                                    target.src = fallbackLogo;
+                                  } else if (
+                                    target.src === fallbackLogo ||
+                                    target.src.endsWith(fallbackLogo)
+                                  ) {
+                                    target.src = defaultLogo;
+                                  } else {
+                                    target.style.opacity = "0";
+                                    const parent = target.parentElement;
+                                    if (parent) {
+                                      const icon =
+                                        parent.querySelector(".fallback-icon");
+                                      if (icon)
+                                        (icon as HTMLElement).style.opacity = "1";
+                                    }
+                                  }
+                                }}
+                              />
+                              <School
+                                size={36}
+                                className="text-green-700 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 fallback-icon transition-opacity"
+                              />
+                            </div>
+                            <div className="flex-1 space-y-3">
+                              <p className="text-[10px] text-gray-400 font-medium">
+                                Gunakan gambar transparan (PNG) untuk hasil terbaik.
+                              </p>
+                              <label className="inline-block bg-green-800 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-green-700 cursor-pointer transition-all">
+                                Pilih Gambar
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
                                       toggleLoader(true);
                                       try {
-                                        const result = reader.result as string;
-                                        if (result.length > 1048000) {
-                                          throw new Error(
-                                            "Ukuran gambar terlalu besar. Gunakan gambar di bawah 750KB.",
-                                          );
-                                        }
+                                        const result = await compressLogoImage(file, 300, 300);
                                         await setDoc(
                                           doc(db, "appConfig", "general"),
                                           {
@@ -15347,36 +15569,154 @@ export default function App() {
                                       } finally {
                                         toggleLoader(false);
                                       }
-                                    };
-                                    reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                              </label>
+                              {appConfig.logoUrl && (
+                                <button
+                                  onClick={async () => {
+                                    setConfirmModal({
+                                      show: true,
+                                      title: "Hapus Logo?",
+                                      message:
+                                        "Hapus logo kustom dan kembali ke default?",
+                                      onConfirm: async () => {
+                                        toggleLoader(true);
+                                        await setDoc(
+                                          doc(db, "appConfig", "general"),
+                                          { logoUrl: null },
+                                          { merge: true },
+                                        );
+                                        toggleLoader(false);
+                                      },
+                                    });
+                                  }}
+                                  className="ml-2 inline-block bg-zinc-200 text-zinc-600 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-300"
+                                >
+                                  Reset Logo
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Logo Tambahan (Kiri KOP) */}
+                        <div>
+                          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">
+                            Logo Tambahan (Kiri KOP)
+                          </label>
+
+                          <div className="flex flex-col gap-3 mb-4">
+                            <input
+                              type="text"
+                              placeholder="Link Logo Tambahan (URL)..."
+                              defaultValue={appConfig.logoKopUrl || ""}
+                              onBlur={async (e) => {
+                                toggleLoader(true);
+                                await setDoc(
+                                  doc(db, "appConfig", "general"),
+                                  { logoKopUrl: e.target.value },
+                                  { merge: true },
+                                );
+                                toggleLoader(false);
+                              }}
+                              className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold w-full"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-6 p-6 bg-gray-50 rounded-[2rem] border border-gray-100 group relative">
+                            <div className="w-24 h-24 bg-white rounded-[1.5rem] flex items-center justify-center shadow-lg overflow-hidden p-2 border-4 border-white transition-transform group-hover:scale-105 relative">
+                              <img
+                                src={appLogoKop}
+                                alt="Preview"
+                                className="w-full h-full object-contain relative z-10"
+                                onError={(e) => {
+                                  console.error(
+                                    "[DEBUG] Logo Kop load error (Settings Preview):",
+                                    e.currentTarget.src,
+                                  );
+                                  const target = e.currentTarget;
+                                  if (
+                                    target.src !== fallbackLogo &&
+                                    !target.src.endsWith(fallbackLogo) &&
+                                    !target.src.endsWith("/logo.png")
+                                  ) {
+                                    target.src = fallbackLogo;
+                                  } else {
+                                    target.src = defaultLogo;
                                   }
                                 }}
                               />
-                            </label>
-                            {appConfig.logoUrl && (
-                              <button
-                                onClick={async () => {
-                                  setConfirmModal({
-                                    show: true,
-                                    title: "Hapus Logo?",
-                                    message:
-                                      "Hapus logo kustom dan kembali ke default?",
-                                    onConfirm: async () => {
+                            </div>
+                            <div className="flex-1 space-y-3">
+                              <p className="text-[10px] text-gray-400 font-medium">
+                                Gunakan gambar transparan (PNG) untuk hasil terbaik. Defaultnya adalah Logo Kementerian Agama.
+                              </p>
+                              <label className="inline-block bg-green-800 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-green-700 cursor-pointer transition-all">
+                                Pilih Gambar
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
                                       toggleLoader(true);
-                                      await setDoc(
-                                        doc(db, "appConfig", "general"),
-                                        { logoUrl: null },
-                                        { merge: true },
-                                      );
-                                      toggleLoader(false);
-                                    },
-                                  });
-                                }}
-                                className="ml-2 inline-block bg-zinc-200 text-zinc-600 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-300"
-                              >
-                                Reset Logo
-                              </button>
-                            )}
+                                      try {
+                                        const result = await compressLogoImage(file, 300, 300);
+                                        await setDoc(
+                                          doc(db, "appConfig", "general"),
+                                          {
+                                            logoKopUrl: result,
+                                          },
+                                          { merge: true },
+                                        );
+                                        console.log("Logo Kop updated on server");
+                                        alert(
+                                          "Logo tambahan KOP berhasil diperbarui!",
+                                        );
+                                      } catch (err: any) {
+                                        console.error(
+                                          "Logo Kop upload error:",
+                                          err,
+                                        );
+                                        alert(
+                                          "Gagal memperbarui logo tambahan: " +
+                                            (err.message || "Unknown error"),
+                                        );
+                                      } finally {
+                                        toggleLoader(false);
+                                      }
+                                    }
+                                  }}
+                                />
+                              </label>
+                              {appConfig.logoKopUrl && (
+                                <button
+                                  onClick={async () => {
+                                    setConfirmModal({
+                                      show: true,
+                                      title: "Hapus Logo Tambahan?",
+                                      message:
+                                        "Hapus logo tambahan kustom dan kembali ke default?",
+                                      onConfirm: async () => {
+                                        toggleLoader(true);
+                                        await setDoc(
+                                          doc(db, "appConfig", "general"),
+                                          { logoKopUrl: null },
+                                          { merge: true },
+                                        );
+                                        toggleLoader(false);
+                                      },
+                                    });
+                                  }}
+                                  className="ml-2 inline-block bg-zinc-200 text-zinc-600 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-300"
+                                >
+                                  Reset Logo
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>

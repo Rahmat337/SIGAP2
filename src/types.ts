@@ -112,6 +112,7 @@ export interface DaySetting {
 
 export interface AppConfig {
   logoUrl?: string;
+  logoKopUrl?: string;
   schoolName?: string;
   cardTemplateUrl?: string;
   subjects?: string[];

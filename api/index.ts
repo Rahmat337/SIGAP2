@@ -20,7 +20,7 @@ try {
 async function startServer() {
   const app = express();
   const PORT = 3000;
-  const isProd = process.env.NODE_ENV === "production" || fs.existsSync(path.join(process.cwd(), "dist", "server.cjs"));
+  const isProd = process.env.NODE_ENV === "production" || (fs.existsSync(path.join(process.cwd(), "dist", "server.cjs")) && !process.argv.some(arg => arg.includes("api/index.ts")));
 
   app.use(express.json());
 
