@@ -2200,7 +2200,7 @@ export default function App() {
     toggleLoader(true);
     try {
       const token = await firestoreService.generateOneTimeToken(session);
-      const url = `https://kbc-mtsn2bombana.vercel.app/?token=${token}&role=${session?.role || "Guru"}&name=${encodeURIComponent(session?.name || "User")}&ott=${token}&ts=${Date.now()}`;
+      const url = `https://kbc-mtsn-2b.vercel.app/?token=${token}&role=${session?.role || "Guru"}&name=${encodeURIComponent(session?.name || "User")}&ott=${token}&ts=${Date.now()}`;
       if (newWindow) {
         newWindow.location.href = url;
       } else {
