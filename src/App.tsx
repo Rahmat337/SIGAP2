@@ -1247,7 +1247,7 @@ export default function App() {
     };
 
     fetchGlobalCounts();
-  }, [firebaseConnected, session]);
+  }, [firebaseConnected, session, masterDataVersion, students.length, teachers.length]);
 
   const [filterClassAbsensi, setFilterClassAbsensi] = useState("");
   const [filterGuruAbsensiClass, setFilterGuruAbsensiClass] = useState("");
@@ -1814,43 +1814,87 @@ export default function App() {
     const todayRekap = rekapDailyList.find((r) => r.tanggal === today);
     const latestRekap = rekapDailyList.length > 0 ? rekapDailyList[0] : null;
 
-    let siswaCount =
-      todayRekap?.siswaCount ??
-      latestRekap?.siswaCount ??
-      (globalSiswaCount > 0 ? globalSiswaCount : students.length);
-    let guruCount =
-      todayRekap?.guruCount ??
-      latestRekap?.guruCount ??
-      (globalGuruCount > 0 ? globalGuruCount : teachers.length);
+    const isLeadershipOrAdmin =
+      session?.role === "Admin" ||
+      (session?.role === "Guru" &&
+        (session?.jabatan === "Kamad" || session?.jabatan === "Wakamad"));
+
+    // Ensure total counts prioritize actual student master data loaded in memory or global count from server
+    let siswaCount = 0;
+    if (isLeadershipOrAdmin && students.length > 0) {
+      siswaCount = Math.max(students.length, globalSiswaCount);
+    } else if (globalSiswaCount > 0) {
+      siswaCount = globalSiswaCount;
+    } else {
+      siswaCount = students.length > 0 ? students.length : (todayRekap?.siswaCount ?? latestRekap?.siswaCount ?? 0);
+    }
+
+    let guruCount = 0;
+    if (isLeadershipOrAdmin && teachers.length > 0) {
+      guruCount = Math.max(teachers.length, globalGuruCount);
+    } else if (globalGuruCount > 0) {
+      guruCount = globalGuruCount;
+    } else {
+      guruCount = teachers.length > 0 ? teachers.length : (todayRekap?.guruCount ?? latestRekap?.guruCount ?? 0);
+    }
+
+    let siswaL = 0;
+    let siswaP = 0;
+    if (isLeadershipOrAdmin && students.length > 0) {
+      siswaL = students.filter(
+        (s) =>
+          s.jenisKelamin === "L" ||
+          s.jenisKelamin === "Laki-Laki" ||
+          s.jenisKelamin === "Laki-laki" ||
+          s.jenisKelamin === "Laki-Laki ",
+      ).length;
+      siswaP = students.filter(
+        (s) =>
+          s.jenisKelamin === "P" ||
+          s.jenisKelamin === "Perempuan" ||
+          s.jenisKelamin === "Perempuan ",
+      ).length;
+      if (siswaL + siswaP < siswaCount) {
+        if (globalSiswaL > 0) {
+          siswaL = globalSiswaL;
+          siswaP = Math.max(0, siswaCount - siswaL);
+        } else {
+          siswaP = Math.max(0, siswaCount - siswaL);
+        }
+      }
+    } else if (globalSiswaL > 0 || globalSiswaP > 0) {
+      siswaL = globalSiswaL;
+      siswaP = globalSiswaP > 0 ? globalSiswaP : Math.max(0, siswaCount - globalSiswaL);
+    } else {
+      siswaL =
+        todayRekap?.siswaL ??
+        latestRekap?.siswaL ??
+        students.filter(
+          (s) =>
+            s.jenisKelamin === "L" ||
+            s.jenisKelamin === "Laki-Laki" ||
+            s.jenisKelamin === "Laki-laki" ||
+            s.jenisKelamin === "Laki-Laki ",
+        ).length;
+      siswaP =
+        todayRekap?.siswaP ??
+        latestRekap?.siswaP ??
+        students.filter(
+          (s) =>
+            s.jenisKelamin === "P" ||
+            s.jenisKelamin === "Perempuan" ||
+            s.jenisKelamin === "Perempuan ",
+        ).length;
+    }
+
     let hadir = todayRekap?.hadirCount ?? 0;
     let lambat = todayRekap?.terlambatCount ?? 0;
     let sakit = todayRekap?.sakitCount ?? 0;
     let izin = todayRekap?.izinCount ?? 0;
     let alfaTotal = todayRekap?.alfaCount ?? 0;
-    let siswaL =
-      todayRekap?.siswaL ??
-      latestRekap?.siswaL ??
-      (globalSiswaL > 0
-        ? globalSiswaL
-        : students.filter(
-            (s) => s.jenisKelamin === "L" || s.jenisKelamin === "Laki-Laki",
-          ).length);
-    let siswaP =
-      todayRekap?.siswaP ??
-      latestRekap?.siswaP ??
-      (globalSiswaP > 0
-        ? globalSiswaP
-        : students.filter(
-            (s) => s.jenisKelamin === "P" || s.jenisKelamin === "Perempuan",
-          ).length);
 
-    // Use live fallback ONLY for Admin and Leadership when rekap is completely unavailable and they actually have full lists loaded (> 50 students)
-    const isLeadershipOrAdmin =
-      session?.role === "Admin" ||
-      (session?.role === "Guru" &&
-        (session?.jabatan === "Kamad" || session?.jabatan === "Wakamad"));
     if (!todayRekap) {
-      if (isLeadershipOrAdmin && students.length > 50) {
+      if (isLeadershipOrAdmin && students.length > 0) {
         const todayAttendance = attendance.filter((a) => a.tanggal === today);
         hadir = todayAttendance.filter((a) => a.status === "Hadir").length;
         lambat = todayAttendance.filter((a) => a.terlambat > 0).length;
@@ -1860,7 +1904,7 @@ export default function App() {
           (a) => a.status === "Alfa",
         ).length;
         const attendedNisns = new Set(todayAttendance.map((a) => a.nisn));
-        const notYetCheckedIn = students.length - attendedNisns.size;
+        const notYetCheckedIn = Math.max(0, siswaCount - attendedNisns.size);
         alfaTotal = isHoliday ? 0 : recordedAlfa + notYetCheckedIn;
       } else {
         // For general teachers / Wali Kelas, if today's summary is not in DB yet, attendance stats are 0,

@@ -857,7 +857,7 @@ export const firestoreService = {
       const siswaCount = totalSiswaSnap.data().count;
 
       // 2. Get total boys/girls count
-      const siswaLSnap = await getCountFromServer(query(collection(db, 'students'), where('jenisKelamin', 'in', ['L', 'Laki-Laki'])));
+      const siswaLSnap = await getCountFromServer(query(collection(db, 'students'), where('jenisKelamin', 'in', ['L', 'Laki-Laki', 'Laki-laki', 'Laki-Laki '])));
       const siswaL = siswaLSnap.data().count;
       const siswaP = siswaCount - siswaL;
 
