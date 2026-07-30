@@ -4794,19 +4794,6 @@ export default function App() {
   const triggerSuccess = (title: string, message: string) => {
     setShowSuccessToast({ title, message });
     setShowCelebration(true);
-    setSearchTermGuru("");
-    setSearchTermSiswa("");
-    setSearchTermKelas("");
-    setSearchTermJadwal("");
-    setPagination({
-      guru: 0,
-      siswa: 0,
-      kelas: 0,
-      jadwal: 0,
-      absensiSiswa: 0,
-      absensiGuru: 0,
-      rekapMapel: 0,
-    });
     setTimeout(() => {
       setShowSuccessToast(null);
       setShowCelebration(false);
@@ -6608,7 +6595,6 @@ export default function App() {
       refreshMasterData();
       setShowSiswaModal(false);
       setEditingSiswa(null);
-      setSearchTermSiswa(""); // Reset search to show newcomer
       triggerSuccess(
         "BERHASIL",
         "Data siswa telah berhasil disimpan. Data akan muncul otomatis di daftar.",
@@ -6667,7 +6653,6 @@ export default function App() {
       refreshMasterData();
       setShowGuruModal(false);
       setEditingGuru(null);
-      setSearchTermGuru(""); // Reset search to show latest data
       triggerSuccess(
         "BERHASIL",
         "Data guru dan akun akses telah diperbarui. Perubahan akan muncul otomatis.",
@@ -6707,7 +6692,6 @@ export default function App() {
       refreshMasterData();
       setShowKelasModal(false);
       setEditingKelas(null);
-      setSearchTermKelas(""); // Reset search
       triggerSuccess(
         "BERHASIL",
         `Kelas ${editingKelas.nama} berhasil disimpan dan sinkron.`,
