@@ -7469,6 +7469,20 @@ export default function App() {
   >([]);
   const [openJpDropdown, setOpenJpDropdown] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (openJpDropdown === null) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && !target.closest(".jp-dropdown-container")) {
+        setOpenJpDropdown(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [openJpDropdown]);
+
   const handleSaveJadwal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingJadwal?.nip) return;
@@ -7887,24 +7901,24 @@ export default function App() {
   const renderJadwalModal = () => (
     <AnimatePresence>
       {showJadwalModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setShowJadwalModal(false)}
           />
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}
-            className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+            className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] my-auto z-10"
           >
-            <div className="bg-green-950 p-6 text-white text-center">
+            <div className="bg-green-950 p-6 text-white text-center shrink-0">
               <h2 className="text-xl font-bold">Konfigurasi Jam Mengajar</h2>
             </div>
-            <div className="p-8 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar">
+            <div className="p-6 md:p-8 space-y-6 flex-1 overflow-y-auto custom-scrollbar pb-36">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
@@ -8007,7 +8021,7 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-3 relative">
                   {teachingSessions.length === 0 && (
                     <div className="text-center py-6 border-2 border-dashed border-gray-100 rounded-2xl text-gray-400 text-xs italic">
                       Belum ada hari mengajar ditambahkan.
@@ -8017,6 +8031,12 @@ export default function App() {
                     <div
                       key={idx}
                       className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex items-center gap-4 relative group"
+                      style={{
+                        zIndex:
+                          openJpDropdown === idx
+                            ? 40
+                            : teachingSessions.length - idx,
+                      }}
                     >
                       <div className="flex-1">
                         <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">
@@ -8083,9 +8103,10 @@ export default function App() {
                                       { length: maxJp },
                                       (_, i) => i + 1,
                                     );
-
                               return (
-                                <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-2 max-h-48 overflow-y-auto">
+                                <div
+                                  className="absolute left-0 right-0 bottom-full mb-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-2 max-h-48 overflow-y-auto"
+                                >
                                   {activeList.length === 0 ? (
                                     <p className="text-[10px] text-gray-400 p-2 italic text-center">
                                       Tidak ada JP aktif
@@ -8175,11 +8196,11 @@ export default function App() {
               </div>
             </div>
 
-            <div className="pt-4 flex gap-3 sticky bottom-0 bg-white py-4 border-t">
+            <div className="p-4 md:px-8 flex gap-3 bg-white border-t shrink-0">
               <button
                 type="button"
                 onClick={() => setShowJadwalModal(false)}
-                className="flex-1 py-4 font-bold text-zinc-400"
+                className="flex-1 py-3.5 font-bold text-zinc-500 hover:bg-zinc-100 rounded-2xl transition-colors"
               >
                 Batal
               </button>
@@ -11311,12 +11332,34 @@ export default function App() {
                                             message: `Seluruh (${g.sessions.length}) jadwal mengajar guru ini untuk mapel ${g.mapel} di SEMUA kelas akan dihapus permanen.`,
                                             entityName: `${g.namaGuru} - ${g.mapel}`,
                                             onConfirm: async () => {
-                                              for (const s of g.sessions) {
-                                                await firestoreService.hapusJadwalMengajar(
-                                                  s.id,
+                                              toggleLoader(true);
+                                              try {
+                                                const sessionIds = new Set(
+                                                  g.sessions.map((s: any) => s.id).filter(Boolean),
                                                 );
+                                                for (const s of g.sessions) {
+                                                  if (s.id) {
+                                                    await firestoreService.hapusJadwalMengajar(
+                                                      s.id,
+                                                    );
+                                                  }
+                                                }
+                                                setTeachingSchedules((prev) =>
+                                                  prev.filter((ts) => !sessionIds.has(ts.id)),
+                                                );
+                                                refreshMasterData();
+                                                triggerSuccess(
+                                                  "BERHASIL",
+                                                  "Seluruh jadwal mengajar berhasil dihapus.",
+                                                );
+                                              } catch (err) {
+                                                triggerError(
+                                                  "GAGAL",
+                                                  "Gagal menghapus jadwal mengajar.",
+                                                );
+                                              } finally {
+                                                toggleLoader(false);
                                               }
-                                              refreshMasterData();
                                             },
                                           });
                                         }}
@@ -11447,10 +11490,33 @@ export default function App() {
                                                       message: `Seluruh jam mengajar guru untuk mapel ini di kelas ${cls} akan dihapus.`,
                                                       entityName: `${g.namaGuru} - Kelas ${cls} (${g.mapel})`,
                                                       onConfirm: async () => {
-                                                        for (const s of classSessions) {
-                                                          await firestoreService.hapusJadwalMengajar(
-                                                            s.id,
+                                                        toggleLoader(true);
+                                                        try {
+                                                          const classSessionIds = new Set(
+                                                            classSessions.map((s: any) => s.id).filter(Boolean),
                                                           );
+                                                          for (const s of classSessions) {
+                                                            if (s.id) {
+                                                              await firestoreService.hapusJadwalMengajar(
+                                                                s.id,
+                                                              );
+                                                            }
+                                                          }
+                                                          setTeachingSchedules((prev) =>
+                                                            prev.filter((ts) => !classSessionIds.has(ts.id)),
+                                                          );
+                                                          refreshMasterData();
+                                                          triggerSuccess(
+                                                            "BERHASIL",
+                                                            `Jam mengajar kelas ${cls} berhasil dihapus.`,
+                                                          );
+                                                        } catch (err) {
+                                                          triggerError(
+                                                            "GAGAL",
+                                                            "Gagal menghapus jam mengajar kelas.",
+                                                          );
+                                                        } finally {
+                                                          toggleLoader(false);
                                                         }
                                                       },
                                                     });
