@@ -7509,12 +7509,14 @@ export default function App() {
     };
   }, [openJpDropdown, openJpDropdownKey]);
 
-  const buildMapelBlocksFromTeacherSchedules = (nip: string) => {
+  const [selectedJadwalMapel, setSelectedJadwalMapel] = useState<string>("");
+
+  const buildMapelBlocksFromTeacherSchedules = (nip: string, targetMapel?: string) => {
     if (!nip) {
       return [
         {
           id: Math.random().toString(),
-          mapel: "",
+          mapel: targetMapel || "",
           classes: [
             {
               id: Math.random().toString(),
@@ -7526,12 +7528,16 @@ export default function App() {
       ];
     }
 
-    const teacherSchedules = teachingSchedules.filter((ts) => ts.nip === nip);
+    let teacherSchedules = teachingSchedules.filter((ts) => ts.nip === nip);
+    if (targetMapel) {
+      teacherSchedules = teacherSchedules.filter((ts) => ts.mapel === targetMapel);
+    }
+
     if (teacherSchedules.length === 0) {
       return [
         {
           id: Math.random().toString(),
-          mapel: "",
+          mapel: targetMapel || "",
           classes: [
             {
               id: Math.random().toString(),
@@ -7609,7 +7615,7 @@ export default function App() {
     return blocks.length > 0 ? blocks : [
       {
         id: Math.random().toString(),
-        mapel: "",
+        mapel: targetMapel || "",
         classes: [
           {
             id: Math.random().toString(),
@@ -7621,16 +7627,18 @@ export default function App() {
     ];
   };
 
-  const openJadwalModalForTeacher = (nip?: string) => {
+  const openJadwalModalForTeacher = (nip?: string, mapel?: string) => {
     const teacherNip = nip || "";
+    const teacherMapel = mapel || "";
     setSelectedJadwalNip(teacherNip);
-    setAssignmentBlocks(buildMapelBlocksFromTeacherSchedules(teacherNip));
+    setSelectedJadwalMapel(teacherMapel);
+    setAssignmentBlocks(buildMapelBlocksFromTeacherSchedules(teacherNip, teacherMapel));
     setShowJadwalModal(true);
   };
 
   const handleTeacherSelectInModal = (nip: string) => {
     setSelectedJadwalNip(nip);
-    setAssignmentBlocks(buildMapelBlocksFromTeacherSchedules(nip));
+    setAssignmentBlocks(buildMapelBlocksFromTeacherSchedules(nip, selectedJadwalMapel));
   };
 
   const handleSaveJadwal = async (e?: React.FormEvent) => {
@@ -7674,8 +7682,13 @@ export default function App() {
     try {
       const g = teachers.find((t) => t.nip === selectedJadwalNip);
 
+      const updatedMapels = new Set(assignmentBlocks.map((b) => b.mapel).filter(Boolean));
+      if (selectedJadwalMapel) {
+        updatedMapels.add(selectedJadwalMapel);
+      }
+
       const oldScheduleIds = teachingSchedules
-        .filter((ts) => ts.nip === selectedJadwalNip)
+        .filter((ts) => ts.nip === selectedJadwalNip && updatedMapels.has(ts.mapel))
         .map((ts) => ts.id);
 
       await firestoreService.replaceTeachingMultiBatch(
@@ -7701,7 +7714,9 @@ export default function App() {
       });
 
       setTeachingSchedules((prev) => {
-        const filtered = prev.filter((ts) => ts.nip !== selectedJadwalNip);
+        const filtered = prev.filter(
+          (ts) => !(ts.nip === selectedJadwalNip && updatedMapels.has(ts.mapel))
+        );
         const updated = [...filtered, ...newScheduleObjects];
         try {
           localStorage.setItem("sigap_cache_schedules", JSON.stringify(updated));
@@ -8157,28 +8172,30 @@ export default function App() {
                   <label className="text-[11px] font-black text-gray-500 uppercase tracking-wider">
                     2. Daftar Mata Pelajaran & Target Kelas
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAssignmentBlocks([
-                        ...assignmentBlocks,
-                        {
-                          id: Math.random().toString(),
-                          mapel: "",
-                          classes: [
-                            {
-                              id: Math.random().toString(),
-                              kelas: "",
-                              sessions: [{ hari: "Senin", target: 2, jps: [] }],
-                            },
-                          ],
-                        },
-                      ]);
-                    }}
-                    className="text-xs font-black text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                  >
-                    <Plus size={14} /> Tambah Mapel Lain
-                  </button>
+                  {!selectedJadwalMapel && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssignmentBlocks([
+                          ...assignmentBlocks,
+                          {
+                            id: Math.random().toString(),
+                            mapel: "",
+                            classes: [
+                              {
+                                id: Math.random().toString(),
+                                kelas: "",
+                                sessions: [{ hari: "Senin", target: 2, jps: [] }],
+                              },
+                            ],
+                          },
+                        ]);
+                      }}
+                      className="text-xs font-black text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                    >
+                      <Plus size={14} /> Tambah Mapel Lain
+                    </button>
+                  )}
                 </div>
 
                 {assignmentBlocks.map((block, bIdx) => (
@@ -11613,7 +11630,7 @@ export default function App() {
                                     <div className="flex justify-center items-center gap-1.5">
                                       <button
                                         type="button"
-                                        onClick={() => openJadwalModalForTeacher(g.nip)}
+                                        onClick={() => openJadwalModalForTeacher(g.nip, g.mapel)}
                                         className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-xl border border-emerald-200 transition-all cursor-pointer flex items-center justify-center h-9 w-9 shadow-2xs"
                                         title="Edit Penugasan & Jam Mengajar"
                                       >
