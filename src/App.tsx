@@ -4841,6 +4841,19 @@ export default function App() {
   const [mobileExtraMenuOpen, setMobileExtraMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showJadwalModal, setShowJadwalModal] = useState(false);
+  const [selectedJadwalNip, setSelectedJadwalNip] = useState<string>("");
+  const [assignmentBlocks, setAssignmentBlocks] = useState<
+    {
+      id: string;
+      mapel: string;
+      classes: {
+        id: string;
+        kelas: string;
+        sessions: { hari: string; target: number; jps: number[] }[];
+      }[];
+    }[]
+  >([]);
+  const [openJpDropdownKey, setOpenJpDropdownKey] = useState<string | null>(null);
   const [editingJadwal, setEditingJadwal] = useState<TeachingSchedule | null>(
     null,
   );
@@ -7482,53 +7495,224 @@ export default function App() {
   const [openJpDropdown, setOpenJpDropdown] = useState<number | null>(null);
 
   useEffect(() => {
-    if (openJpDropdown === null) return;
+    if (!openJpDropdownKey && openJpDropdown === null) return;
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && !target.closest(".jp-dropdown-container")) {
         setOpenJpDropdown(null);
+        setOpenJpDropdownKey(null);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [openJpDropdown]);
+  }, [openJpDropdown, openJpDropdownKey]);
 
-  const handleSaveJadwal = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingJadwal?.nip) return;
+  const buildMapelBlocksFromTeacherSchedules = (nip: string) => {
+    if (!nip) {
+      return [
+        {
+          id: Math.random().toString(),
+          mapel: "",
+          classes: [
+            {
+              id: Math.random().toString(),
+              kelas: "",
+              sessions: [{ hari: "Senin", target: 2, jps: [] }],
+            },
+          ],
+        },
+      ];
+    }
+
+    const teacherSchedules = teachingSchedules.filter((ts) => ts.nip === nip);
+    if (teacherSchedules.length === 0) {
+      return [
+        {
+          id: Math.random().toString(),
+          mapel: "",
+          classes: [
+            {
+              id: Math.random().toString(),
+              kelas: "",
+              sessions: [{ hari: "Senin", target: 2, jps: [] }],
+            },
+          ],
+        },
+      ];
+    }
+
+    const mapelGroups = new Map<string, TeachingSchedule[]>();
+    teacherSchedules.forEach((ts) => {
+      const m = ts.mapel || "Lainnya";
+      if (!mapelGroups.has(m)) mapelGroups.set(m, []);
+      mapelGroups.get(m)!.push(ts);
+    });
+
+    const blocks: {
+      id: string;
+      mapel: string;
+      classes: {
+        id: string;
+        kelas: string;
+        sessions: { hari: string; target: number; jps: number[] }[];
+      }[];
+    }[] = [];
+
+    mapelGroups.forEach((schedules, mapel) => {
+      const kelasGroups = new Map<string, TeachingSchedule[]>();
+      schedules.forEach((s) => {
+        const k = s.kelas || "";
+        if (!kelasGroups.has(k)) kelasGroups.set(k, []);
+        kelasGroups.get(k)!.push(s);
+      });
+
+      const classItems: {
+        id: string;
+        kelas: string;
+        sessions: { hari: string; target: number; jps: number[] }[];
+      }[] = [];
+
+      kelasGroups.forEach((kSchedules, kName) => {
+        const sessionsMap = new Map<string, { hari: string; target: number; jps: number[] }>();
+        kSchedules.forEach((s) => {
+          if (!sessionsMap.has(s.hari)) {
+            sessionsMap.set(s.hari, {
+              hari: s.hari,
+              target: s.targetPertemuan || 2,
+              jps: s.jps || [],
+            });
+          }
+        });
+
+        classItems.push({
+          id: Math.random().toString(),
+          kelas: kName,
+          sessions: Array.from(sessionsMap.values()),
+        });
+      });
+
+      blocks.push({
+        id: Math.random().toString(),
+        mapel,
+        classes: classItems.length > 0 ? classItems : [
+          {
+            id: Math.random().toString(),
+            kelas: "",
+            sessions: [{ hari: "Senin", target: 2, jps: [] }],
+          },
+        ],
+      });
+    });
+
+    return blocks.length > 0 ? blocks : [
+      {
+        id: Math.random().toString(),
+        mapel: "",
+        classes: [
+          {
+            id: Math.random().toString(),
+            kelas: "",
+            sessions: [{ hari: "Senin", target: 2, jps: [] }],
+          },
+        ],
+      },
+    ];
+  };
+
+  const openJadwalModalForTeacher = (nip?: string) => {
+    const teacherNip = nip || "";
+    setSelectedJadwalNip(teacherNip);
+    setAssignmentBlocks(buildMapelBlocksFromTeacherSchedules(teacherNip));
+    setShowJadwalModal(true);
+  };
+
+  const handleTeacherSelectInModal = (nip: string) => {
+    setSelectedJadwalNip(nip);
+    setAssignmentBlocks(buildMapelBlocksFromTeacherSchedules(nip));
+  };
+
+  const handleSaveJadwal = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedJadwalNip) {
+      alert("Harap pilih Guru terlebih dahulu.");
+      return;
+    }
+
+    const allNewSchedules: {
+      kelas: string;
+      mapel: string;
+      hari: string;
+      target: number;
+      jps: number[];
+    }[] = [];
+
+    assignmentBlocks.forEach((block) => {
+      if (!block.mapel) return;
+      block.classes.forEach((clsItem) => {
+        if (!clsItem.kelas) return;
+        clsItem.sessions.forEach((sess) => {
+          if (!sess.hari) return;
+          allNewSchedules.push({
+            kelas: clsItem.kelas,
+            mapel: block.mapel,
+            hari: sess.hari,
+            target: sess.target || 2,
+            jps: sess.jps || [],
+          });
+        });
+      });
+    });
+
+    if (allNewSchedules.length === 0) {
+      alert("Harap lengkapi minimal 1 Mata Pelajaran, 1 Kelas, dan 1 Sesi Hari Mengajar.");
+      return;
+    }
+
     toggleLoader(true);
     try {
-      // Cleanup existing schedules for this specific teacher, mapel, and class
-      // to avoid duplicates if days are changed.
-      const teacherSchedules = teachingSchedules.filter(
-        (ts) =>
-          ts.nip === editingJadwal.nip &&
-          ts.mapel === editingJadwal.mapel &&
-          ts.kelas === editingJadwal.kelas,
-      );
-      const g = teachers.find((t) => t.nip === editingJadwal.nip);
-      // Ensure all sessions have the correct class from editingJadwal
-      const finalSessions = teachingSessions.map((s) => ({
-        ...s,
-        kelas: editingJadwal.kelas || "",
-      }));
+      const g = teachers.find((t) => t.nip === selectedJadwalNip);
 
-      await firestoreService.replaceTeachingBatch(
-        editingJadwal.nip,
+      const oldScheduleIds = teachingSchedules
+        .filter((ts) => ts.nip === selectedJadwalNip)
+        .map((ts) => ts.id);
+
+      await firestoreService.replaceTeachingMultiBatch(
+        selectedJadwalNip,
         g?.nama || "",
-        editingJadwal.mapel || "",
-        editingJadwal.kelas || "",
-        teacherSchedules.map((old) => old.id),
-        finalSessions
+        oldScheduleIds,
+        allNewSchedules,
       );
-      refreshMasterData();
+
+      const newScheduleObjects: TeachingSchedule[] = allNewSchedules.map((item) => {
+        const mapelClean = (item.mapel || "mapel").replace(/[^a-zA-Z0-9]/g, "_");
+        const id = `${selectedJadwalNip}-${item.kelas}-${mapelClean}-${item.hari}`;
+        return {
+          id,
+          nip: selectedJadwalNip,
+          namaGuru: g?.nama || "",
+          kelas: item.kelas,
+          mapel: item.mapel,
+          hari: item.hari,
+          targetPertemuan: item.target,
+          jps: item.jps || [],
+        };
+      });
+
+      setTeachingSchedules((prev) => {
+        const filtered = prev.filter((ts) => ts.nip !== selectedJadwalNip);
+        const updated = [...filtered, ...newScheduleObjects];
+        try {
+          localStorage.setItem("sigap_cache_schedules", JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+
       setShowJadwalModal(false);
-      setTeachingSessions([]);
-      triggerSuccess("BERHASIL", "Konfigurasi jam mengajar telah diperbarui.");
+      triggerSuccess("BERHASIL", "Konfigurasi jam mengajar berhasil disimpan.");
     } catch (e) {
-      alert("Gagal menyimpan jadwal.");
+      alert("Gagal menyimpan jadwal mengajar.");
     } finally {
       toggleLoader(false);
     }
@@ -7920,311 +8104,409 @@ export default function App() {
             onClick={() => setShowJadwalModal(false)}
           />
           <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] my-auto z-10"
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="relative bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] my-auto z-10 border border-gray-100"
           >
-            <div className="bg-green-950 p-6 text-white text-center shrink-0">
-              <h2 className="text-xl font-bold">Konfigurasi Jam Mengajar</h2>
-            </div>
-            <div className="p-6 md:p-8 space-y-6 flex-1 overflow-y-auto custom-scrollbar pb-36">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
-                    Nama Guru
-                  </label>
-                  <select
-                    required
-                    value={editingJadwal?.nip || ""}
-                    onChange={(e) => {
-                      const t = teachers.find(
-                        (tg) => tg.nip === e.target.value,
-                      );
-                      setEditingJadwal({
-                        ...(editingJadwal as any),
-                        nip: e.target.value,
-                        namaGuru: t?.nama || "",
-                      });
-                    }}
-                    className="w-full bg-zinc-50 border-0 rounded-xl px-4 py-3 font-bold mt-1 text-sm focus:ring-2 focus:ring-green-500"
-                  >
-                    <option value="">-- Pilih Guru --</option>
-                    {teachers
-                      .filter((t) => t.nip !== "ADMIN001" && t.role !== "Admin")
-                      .map((t) => (
-                        <option key={t.nip} value={t.nip}>
-                          {t.nama}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
-                    Mata Pelajaran
-                  </label>
-                  <select
-                    required
-                    value={editingJadwal?.mapel || ""}
-                    onChange={(e) =>
-                      setEditingJadwal({
-                        ...(editingJadwal as any),
-                        mapel: e.target.value,
-                      })
-                    }
-                    className="w-full bg-zinc-50 border-0 rounded-xl px-4 py-3 font-bold mt-1 text-sm focus:ring-2 focus:ring-green-500"
-                  >
-                    <option value="">-- Pilih Mapel --</option>
-                    {activeSubjects.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
-                    Kelas
-                  </label>
-                  <select
-                    required
-                    value={editingJadwal?.kelas || ""}
-                    onChange={(e) =>
-                      setEditingJadwal({
-                        ...(editingJadwal as any),
-                        kelas: e.target.value,
-                      })
-                    }
-                    className="w-full bg-zinc-50 border-0 rounded-xl px-4 py-3 font-bold mt-1 text-sm focus:ring-2 focus:ring-green-500"
-                  >
-                    <option value="">-- Pilih Kelas --</option>
-                    {classrooms.map((c) => (
-                      <option key={c.nama} value={c.nama}>
-                        {c.nama}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-green-950 via-emerald-900 to-green-950 p-6 text-white shrink-0 flex justify-between items-center">
               <div>
-                <div className="flex justify-between items-center mb-3">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
-                    Sesi Mengajar (Hari & Target)
-                  </label>
-                  <button
-                    onClick={() => {
-                      setOpenJpDropdown(null);
-                      setTeachingSessions([
-                        ...teachingSessions,
-                        {
-                          kelas: editingJadwal?.kelas || "",
-                          hari: "Senin",
-                          target: 2,
-                          jps: [],
-                        },
-                      ]);
-                    }}
-                    className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1 hover:text-blue-800 transition-colors"
-                  >
-                    <Plus size={10} /> Tambah Hari
-                  </button>
-                </div>
-
-                <div className="space-y-3 relative">
-                  {teachingSessions.length === 0 && (
-                    <div className="text-center py-6 border-2 border-dashed border-gray-100 rounded-2xl text-gray-400 text-xs italic">
-                      Belum ada hari mengajar ditambahkan.
-                    </div>
-                  )}
-                  {teachingSessions.map((session, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex items-center gap-4 relative group"
-                      style={{
-                        zIndex:
-                          openJpDropdown === idx
-                            ? 40
-                            : teachingSessions.length - idx,
-                      }}
-                    >
-                      <div className="flex-1">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">
-                          Hari
-                        </label>
-                        <select
-                          value={session.hari}
-                          onChange={(e) => {
-                            const newSess = [...teachingSessions];
-                            newSess[idx].hari = e.target.value;
-                            newSess[idx].jps = []; // Reset selected JPs since active JPs might differ for this day
-                            setTeachingSessions(newSess);
-                          }}
-                          className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold focus:ring-1 focus:ring-green-500"
-                        >
-                          {[
-                            "Senin",
-                            "Selasa",
-                            "Rabu",
-                            "Kamis",
-                            "Jumat",
-                            "Sabtu",
-                          ].map((h) => (
-                            <option key={h} value={h}>
-                              {h}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Multiselect Dropdown for JPs */}
-                      <div className="w-44 relative">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">
-                          Jam Pelajaran (JP)
-                        </label>
-                        <div className="relative jp-dropdown-container">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setOpenJpDropdown(
-                                openJpDropdown === idx ? null : idx,
-                              )
-                            }
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-left flex justify-between items-center gap-1 focus:ring-1 focus:ring-green-500 cursor-pointer min-h-[38px] truncate relative z-50"
-                          >
-                            <span className="truncate">
-                              {session.jps && session.jps.length > 0
-                                ? session.jps.map((j) => `JP ${j}`).join(", ")
-                                : "-- Pilih JP --"}
-                            </span>
-                            <span className="text-gray-400 text-[9px]">▼</span>
-                          </button>
-
-                          {openJpDropdown === idx &&
-                            (() => {
-                              const daySett = settings.find(
-                                (s) => s.hari === session.hari,
-                              );
-                              const maxJp = session.hari === "Jumat" ? 6 : 8;
-                              const activeList =
-                                daySett && Array.isArray(daySett.activeJps)
-                                  ? daySett.activeJps
-                                  : Array.from(
-                                      { length: maxJp },
-                                      (_, i) => i + 1,
-                                    );
-                              return (
-                                <div
-                                  className="absolute left-0 right-0 bottom-full mb-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-2 max-h-48 overflow-y-auto"
-                                >
-                                  {activeList.length === 0 ? (
-                                    <p className="text-[10px] text-gray-400 p-2 italic text-center">
-                                      Tidak ada JP aktif
-                                    </p>
-                                  ) : (
-                                    <div className="space-y-1">
-                                      {activeList.map((j) => {
-                                        const isSelected = (
-                                          session.jps || []
-                                        ).includes(j);
-                                        return (
-                                          <label
-                                            key={j}
-                                            className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded-lg text-xs font-bold cursor-pointer text-zinc-700"
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              checked={isSelected}
-                                              onChange={(e) => {
-                                                const checked =
-                                                  e.target.checked;
-                                                const currentJps =
-                                                  session.jps || [];
-                                                let nextJps: number[];
-                                                if (checked) {
-                                                  nextJps = [
-                                                    ...currentJps,
-                                                    j,
-                                                  ].sort((a, b) => a - b);
-                                                } else {
-                                                  nextJps = currentJps.filter(
-                                                    (n) => n !== j,
-                                                  );
-                                                }
-                                                const updated = [
-                                                  ...teachingSessions,
-                                                ];
-                                                updated[idx] = {
-                                                  ...session,
-                                                  jps: nextJps,
-                                                };
-                                                setTeachingSessions(updated);
-                                              }}
-                                              className="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                                            />
-                                            <span>JP {j}</span>
-                                          </label>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()}
-                        </div>
-                      </div>
-
-                      <div className="w-24">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 block">
-                          Sesi/Jam
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={session.target}
-                          onChange={(e) => {
-                            const newSess = [...teachingSessions];
-                            newSess[idx].target = parseInt(e.target.value);
-                            setTeachingSessions(newSess);
-                          }}
-                          className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold focus:ring-1 focus:ring-green-500"
-                        />
-                      </div>
-                      <button
-                        onClick={() =>
-                          setTeachingSessions(
-                            teachingSessions.filter((_, i) => i !== idx),
-                          )
-                        }
-                        className="text-red-400 hover:text-red-600 transition-colors pt-4"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <span>Konfigurasi Penugasan & Jam Mengajar Guru</span>
+                </h2>
+                <p className="text-xs text-green-200 mt-1 font-medium">
+                  Pengaturan per Mata Pelajaran, Target Kelas, Hari & Jam Pelajaran (JP) dalam 1 Simpanan (Single Batch Write)
+                </p>
               </div>
-            </div>
-
-            <div className="p-4 md:px-8 flex gap-3 bg-white border-t shrink-0">
               <button
                 type="button"
                 onClick={() => setShowJadwalModal(false)}
-                className="flex-1 py-3.5 font-bold text-zinc-500 hover:bg-zinc-100 rounded-2xl transition-colors"
+                className="text-green-300 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors font-bold text-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+              {/* Section 1: Guru Select */}
+              <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 space-y-2">
+                <label className="text-[11px] font-black text-gray-500 uppercase tracking-wider block">
+                  1. Pilih Guru Mengajar <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={selectedJadwalNip}
+                  onChange={(e) => handleTeacherSelectInModal(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-xl px-4 py-3 font-bold text-sm text-zinc-800 focus:ring-2 focus:ring-green-500 shadow-xs"
+                >
+                  <option value="">-- Pilih Guru --</option>
+                  {teachers
+                    .filter((t) => t.nip !== "ADMIN001" && t.role !== "Admin")
+                    .map((t) => (
+                      <option key={t.nip} value={t.nip}>
+                        {t.nama} ({t.nip})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Section 2: Penugasan Blocks */}
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <label className="text-[11px] font-black text-gray-500 uppercase tracking-wider">
+                    2. Daftar Mata Pelajaran & Target Kelas
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignmentBlocks([
+                        ...assignmentBlocks,
+                        {
+                          id: Math.random().toString(),
+                          mapel: "",
+                          classes: [
+                            {
+                              id: Math.random().toString(),
+                              kelas: "",
+                              sessions: [{ hari: "Senin", target: 2, jps: [] }],
+                            },
+                          ],
+                        },
+                      ]);
+                    }}
+                    className="text-xs font-black text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                  >
+                    <Plus size={14} /> Tambah Mapel Lain
+                  </button>
+                </div>
+
+                {assignmentBlocks.map((block, bIdx) => (
+                  <div
+                    key={block.id}
+                    className="bg-white rounded-2xl border-2 border-emerald-200 p-5 space-y-5 shadow-sm relative group hover:border-emerald-400 transition-all"
+                  >
+                    {/* Block Header */}
+                    <div className="flex justify-between items-center border-b border-gray-100 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-3 py-1 rounded-lg border border-emerald-200">
+                          Mapel #{bIdx + 1}
+                        </span>
+                        {block.mapel && (
+                          <span className="text-sm font-black text-zinc-800">
+                            {block.mapel}
+                          </span>
+                        )}
+                      </div>
+                      {assignmentBlocks.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAssignmentBlocks(assignmentBlocks.filter((_, i) => i !== bIdx));
+                          }}
+                          className="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-1 px-2.5 py-1 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-red-200"
+                        >
+                          <Trash2 size={14} /> Hapus Mapel Ini
+                        </button>
+                      )}
+                    </div>
+
+                    {/* A. Dropdown Mata Pelajaran */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block">
+                        Pilih Mata Pelajaran <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={block.mapel}
+                        onChange={(e) => {
+                          const updated = [...assignmentBlocks];
+                          updated[bIdx].mapel = e.target.value;
+                          setAssignmentBlocks(updated);
+                        }}
+                        className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-2.5 font-bold text-sm text-zinc-800 focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="">-- Pilih Mata Pelajaran --</option>
+                        {activeSubjects.map((subject) => (
+                          <option key={subject} value={subject}>
+                            {subject}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* B. Target Kelas List */}
+                    <div className="space-y-4 pt-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block">
+                          Target Kelas & Hari Mengajar untuk Mapel Ini <span className="text-red-500">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = [...assignmentBlocks];
+                            updated[bIdx].classes.push({
+                              id: Math.random().toString(),
+                              kelas: "",
+                              sessions: [{ hari: "Senin", target: 2, jps: [] }],
+                            });
+                            setAssignmentBlocks(updated);
+                          }}
+                          className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <Plus size={12} /> Tambah Kelas
+                        </button>
+                      </div>
+
+                      {block.classes.map((clsItem, cIdx) => (
+                        <div
+                          key={clsItem.id}
+                          className="bg-gray-50/80 rounded-xl border border-gray-200 p-4 space-y-3.5"
+                        >
+                          {/* Kelas Header */}
+                          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-lg border border-gray-200 shadow-2xs">
+                            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                              <label className="text-xs font-black text-gray-600 uppercase shrink-0">
+                                Kelas:
+                              </label>
+                              <select
+                                value={clsItem.kelas}
+                                onChange={(e) => {
+                                  const updated = [...assignmentBlocks];
+                                  updated[bIdx].classes[cIdx].kelas = e.target.value;
+                                  setAssignmentBlocks(updated);
+                                }}
+                                className="flex-1 bg-gray-50 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-bold focus:ring-1 focus:ring-emerald-500 text-zinc-800"
+                              >
+                                <option value="">-- Pilih Kelas --</option>
+                                {classrooms.map((c) => (
+                                  <option key={c.nama} value={c.nama}>
+                                    {c.nama}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {block.classes.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...assignmentBlocks];
+                                  updated[bIdx].classes = updated[bIdx].classes.filter(
+                                    (_, i) => i !== cIdx,
+                                  );
+                                  setAssignmentBlocks(updated);
+                                }}
+                                className="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-1 px-2 py-1 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2 size={14} /> Hapus Kelas Ini
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Sessions List for this Class */}
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center px-1">
+                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                                Hari Mengajar, Jam Pelajaran (JP) & Target Sesi
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...assignmentBlocks];
+                                  updated[bIdx].classes[cIdx].sessions.push({
+                                    hari: "Senin",
+                                    target: 2,
+                                    jps: [],
+                                  });
+                                  setAssignmentBlocks(updated);
+                                }}
+                                className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer bg-white px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-50"
+                              >
+                                <Plus size={10} /> Tambah Hari
+                              </button>
+                            </div>
+
+                            {clsItem.sessions.map((sess, sIdx) => {
+                              const dropdownKey = `${bIdx}-${cIdx}-${sIdx}`;
+                              return (
+                                <div
+                                  key={sIdx}
+                                  className="bg-white p-3 rounded-xl border border-gray-200 flex flex-wrap sm:flex-nowrap items-center gap-3 relative shadow-2xs"
+                                  style={{
+                                    zIndex:
+                                      openJpDropdownKey === dropdownKey
+                                        ? 50
+                                        : clsItem.sessions.length - sIdx,
+                                  }}
+                                >
+                                  {/* Hari */}
+                                  <div className="w-28 sm:w-32">
+                                    <label className="text-[9px] font-black text-gray-400 uppercase mb-1 block">
+                                      Hari
+                                    </label>
+                                    <select
+                                      value={sess.hari}
+                                      onChange={(e) => {
+                                        const updated = [...assignmentBlocks];
+                                        updated[bIdx].classes[cIdx].sessions[sIdx].hari =
+                                          e.target.value;
+                                        updated[bIdx].classes[cIdx].sessions[sIdx].jps = [];
+                                        setAssignmentBlocks(updated);
+                                      }}
+                                      className="w-full bg-gray-50 border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-bold focus:ring-1 focus:ring-emerald-500"
+                                    >
+                                      {["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"].map(
+                                        (h) => (
+                                          <option key={h} value={h}>
+                                            {h}
+                                          </option>
+                                        ),
+                                      )}
+                                    </select>
+                                  </div>
+
+                                  {/* JP Multiselect */}
+                                  <div className="flex-1 min-w-[140px] relative">
+                                    <label className="text-[9px] font-black text-gray-400 uppercase mb-1 block">
+                                      Jam Pelajaran (JP)
+                                    </label>
+                                    <div className="relative jp-dropdown-container">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setOpenJpDropdownKey(
+                                            openJpDropdownKey === dropdownKey ? null : dropdownKey,
+                                          )
+                                        }
+                                        className="w-full bg-gray-50 border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-left flex justify-between items-center gap-1 focus:ring-1 focus:ring-emerald-500 cursor-pointer min-h-[34px] truncate"
+                                      >
+                                        <span className="truncate">
+                                          {sess.jps && sess.jps.length > 0
+                                            ? sess.jps.map((j) => `JP ${j}`).join(", ")
+                                            : "-- Pilih JP --"}
+                                        </span>
+                                        <span className="text-gray-400 text-[9px]">▼</span>
+                                      </button>
+
+                                      {openJpDropdownKey === dropdownKey &&
+                                        (() => {
+                                          const daySett = settings.find((s) => s.hari === sess.hari);
+                                          const maxJp = sess.hari === "Jumat" ? 6 : 8;
+                                          const activeList =
+                                            daySett && Array.isArray(daySett.activeJps)
+                                              ? daySett.activeJps
+                                              : Array.from({ length: maxJp }, (_, i) => i + 1);
+
+                                          return (
+                                            <div className="absolute left-0 right-0 bottom-full mb-1 bg-white border border-gray-300 rounded-xl shadow-xl z-50 p-2 max-h-48 overflow-y-auto">
+                                              {activeList.map((j) => {
+                                                const isSel = (sess.jps || []).includes(j);
+                                                return (
+                                                  <label
+                                                    key={j}
+                                                    className="flex items-center gap-2 p-1.5 hover:bg-emerald-50 rounded-lg text-xs font-bold cursor-pointer text-zinc-700"
+                                                  >
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={isSel}
+                                                      onChange={(e) => {
+                                                        const checked = e.target.checked;
+                                                        const current = sess.jps || [];
+                                                        let next: number[];
+                                                        if (checked) {
+                                                          next = [...current, j].sort((a, b) => a - b);
+                                                        } else {
+                                                          next = current.filter((n) => n !== j);
+                                                        }
+                                                        const updated = [...assignmentBlocks];
+                                                        updated[bIdx].classes[cIdx].sessions[sIdx].jps =
+                                                          next;
+                                                        setAssignmentBlocks(updated);
+                                                      }}
+                                                      className="w-3.5 h-3.5 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                                                    />
+                                                    <span>JP {j}</span>
+                                                  </label>
+                                                );
+                                              })}
+                                            </div>
+                                          );
+                                        })()}
+                                    </div>
+                                  </div>
+
+                                  {/* Target Sesi */}
+                                  <div className="w-24">
+                                    <label className="text-[9px] font-black text-gray-400 uppercase mb-1 block">
+                                      Target Sesi
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      value={sess.target}
+                                      onChange={(e) => {
+                                        const updated = [...assignmentBlocks];
+                                        updated[bIdx].classes[cIdx].sessions[sIdx].target =
+                                          parseInt(e.target.value) || 1;
+                                        setAssignmentBlocks(updated);
+                                      }}
+                                      className="w-full bg-gray-50 border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-bold focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                  </div>
+
+                                  {/* Delete Session */}
+                                  {clsItem.sessions.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updated = [...assignmentBlocks];
+                                        updated[bIdx].classes[cIdx].sessions = updated[
+                                          bIdx
+                                        ].classes[cIdx].sessions.filter((_, i) => i !== sIdx);
+                                        setAssignmentBlocks(updated);
+                                      }}
+                                      className="text-red-400 hover:text-red-600 pt-3 cursor-pointer"
+                                      title="Hapus Hari Sesi Ini"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 md:px-6 flex gap-3 bg-gray-50 border-t shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowJadwalModal(false)}
+                className="flex-1 py-3 font-bold text-zinc-600 hover:bg-zinc-200/60 rounded-2xl transition-colors text-sm cursor-pointer"
               >
                 Batal
               </button>
               <button
+                type="button"
                 onClick={handleSaveJadwal}
                 disabled={
-                  !editingJadwal?.nip ||
-                  !editingJadwal?.mapel ||
-                  !editingJadwal?.kelas ||
-                  teachingSessions.length === 0
+                  !selectedJadwalNip ||
+                  assignmentBlocks.some(
+                    (b) =>
+                      !b.mapel ||
+                      b.classes.length === 0 ||
+                      b.classes.some((c) => !c.kelas || c.sessions.length === 0),
+                  )
                 }
-                className="flex-1 bg-green-900 text-white rounded-2xl py-4 font-bold shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-[2] bg-emerald-900 hover:bg-emerald-950 text-white rounded-2xl py-3 font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
               >
-                Simpan Konfigurasi
+                Simpan Semua Konfigurasi
               </button>
             </div>
           </motion.div>
@@ -11174,19 +11456,9 @@ export default function App() {
                     ))}
                   </select>
                   <button
-                    onClick={() => {
-                      setEditingJadwal({
-                        id: "",
-                        nip: "",
-                        namaGuru: "",
-                        kelas: "",
-                        hari: "",
-                        targetPertemuan: 2,
-                      } as any);
-                      setTeachingSessions([]);
-                      setShowJadwalModal(true);
-                    }}
-                    className="bg-green-800 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm"
+                    type="button"
+                    onClick={() => openJadwalModalForTeacher("")}
+                    className="bg-green-800 hover:bg-green-900 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm cursor-pointer transition-colors"
                   >
                     <Plus size={14} /> Tambah Jam Mengajar
                   </button>
@@ -11321,8 +11593,17 @@ export default function App() {
                                     </div>
                                   </td>
                                   <td className="px-6 py-4 text-center text-nowrap">
-                                    <div className="flex justify-center gap-2">
+                                    <div className="flex justify-center items-center gap-1.5">
                                       <button
+                                        type="button"
+                                        onClick={() => openJadwalModalForTeacher(g.nip)}
+                                        className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-xl border border-emerald-200 transition-all cursor-pointer flex items-center justify-center h-9 w-9 shadow-2xs"
+                                        title="Edit Penugasan & Jam Mengajar"
+                                      >
+                                        <Edit size={16} />
+                                      </button>
+                                      <button
+                                        type="button"
                                         onClick={() => {
                                           setExpandedJadwal((prev) =>
                                             prev.includes(rowKey)
@@ -11330,11 +11611,17 @@ export default function App() {
                                               : [...prev, rowKey],
                                           );
                                         }}
-                                        className="text-[10px] font-black tracking-wider uppercase text-blue-600 bg-blue-50/50 hover:bg-blue-50 px-3.5 py-2 rounded-xl border border-blue-100/50 transition-all cursor-pointer"
+                                        className={`p-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center h-9 w-9 shadow-2xs ${
+                                          isExpanded
+                                            ? "text-blue-700 bg-blue-100 border-blue-300"
+                                            : "text-blue-600 hover:text-blue-800 bg-blue-50/80 hover:bg-blue-100 border-blue-200"
+                                        }`}
+                                        title={isExpanded ? "Sembunyikan Sesi Kelas" : "Lihat Sesi Kelas"}
                                       >
-                                        {isExpanded ? "Tutup" : "Lihat Sesi"}
+                                        {isExpanded ? <EyeOff size={16} /> : <Eye size={16} />}
                                       </button>
                                       <button
+                                        type="button"
                                         onClick={() => {
                                           setConfirmModal({
                                             show: true,
@@ -11373,7 +11660,7 @@ export default function App() {
                                             },
                                           });
                                         }}
-                                        className="text-red-500 hover:bg-red-50 p-2 border border-transparent hover:border-red-100 rounded-xl transition-all cursor-pointer"
+                                        className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 border border-red-200 rounded-xl transition-all cursor-pointer flex items-center justify-center h-9 w-9 shadow-2xs"
                                         title="Hapus Semua Kelas/Sesi"
                                       >
                                         <Trash2 size={16} />
@@ -11461,81 +11748,6 @@ export default function App() {
                                                     ),
                                                   )}
                                                 </div>
-                                              </div>
-
-                                              <div className="flex gap-1.5">
-                                                <button
-                                                  onClick={() => {
-                                                    setEditingJadwal({
-                                                      id: "",
-                                                      nip: g.nip,
-                                                      namaGuru: g.namaGuru,
-                                                      mapel: g.mapel,
-                                                      kelas: cls,
-                                                    } as any);
-                                                    setTeachingSessions(
-                                                      classSessions.map(
-                                                        (s: any) => ({
-                                                          kelas: s.kelas,
-                                                          hari: s.hari,
-                                                          target:
-                                                            s.targetPertemuan,
-                                                          jps: s.jps || [],
-                                                        }),
-                                                      ),
-                                                    );
-                                                    setShowJadwalModal(true);
-                                                  }}
-                                                  className="text-blue-500 hover:bg-blue-50 p-2 border border-transparent hover:border-blue-100 rounded-xl transition-all h-8 w-8 flex items-center justify-center cursor-pointer"
-                                                  title="Edit Jadwal Kelas Ini"
-                                                >
-                                                  <Edit size={14} />
-                                                </button>
-                                                <button
-                                                  onClick={() => {
-                                                    setConfirmModal({
-                                                      show: true,
-                                                      title:
-                                                        "Hapus Jam Mengajar Kelas?",
-                                                      message: `Seluruh jam mengajar guru untuk mapel ini di kelas ${cls} akan dihapus.`,
-                                                      entityName: `${g.namaGuru} - Kelas ${cls} (${g.mapel})`,
-                                                      onConfirm: async () => {
-                                                        toggleLoader(true);
-                                                        try {
-                                                          const classSessionIds = new Set(
-                                                            classSessions.map((s: any) => s.id).filter(Boolean),
-                                                          );
-                                                          for (const s of classSessions) {
-                                                            if (s.id) {
-                                                              await firestoreService.hapusJadwalMengajar(
-                                                                s.id,
-                                                              );
-                                                            }
-                                                          }
-                                                          setTeachingSchedules((prev) =>
-                                                            prev.filter((ts) => !classSessionIds.has(ts.id)),
-                                                          );
-                                                          refreshMasterData();
-                                                          triggerSuccess(
-                                                            "BERHASIL",
-                                                            `Jam mengajar kelas ${cls} berhasil dihapus.`,
-                                                          );
-                                                        } catch (err) {
-                                                          triggerError(
-                                                            "GAGAL",
-                                                            "Gagal menghapus jam mengajar kelas.",
-                                                          );
-                                                        } finally {
-                                                          toggleLoader(false);
-                                                        }
-                                                      },
-                                                    });
-                                                  }}
-                                                  className="text-red-500 hover:bg-red-50 p-2 border border-transparent hover:border-red-100 rounded-xl transition-all h-8 w-8 flex items-center justify-center cursor-pointer"
-                                                  title="Hapus Jadwal Kelas Ini"
-                                                >
-                                                  <Trash2 size={14} />
-                                                </button>
                                               </div>
                                             </div>
                                           );

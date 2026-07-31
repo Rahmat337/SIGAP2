@@ -732,6 +732,40 @@ export const firestoreService = {
     }
   },
 
+  replaceTeachingMultiBatch: async (
+    nip: string,
+    namaGuru: string,
+    oldScheduleIdsToDelete: string[],
+    allNewSchedules: { kelas: string; mapel: string; hari: string; target: number; jps?: number[] }[]
+  ) => {
+    try {
+      const batch = writeBatch(db);
+      for (const id of oldScheduleIdsToDelete) {
+        if (id) {
+          batch.delete(doc(db, 'teachingSchedules', id));
+        }
+      }
+      for (const item of allNewSchedules) {
+        const mapelClean = (item.mapel || 'mapel').replace(/[^a-zA-Z0-9]/g, '_');
+        const id = `${nip}-${item.kelas}-${mapelClean}-${item.hari}`;
+        batch.set(doc(db, 'teachingSchedules', id), {
+          id,
+          nip,
+          namaGuru,
+          kelas: item.kelas,
+          mapel: item.mapel,
+          hari: item.hari,
+          targetPertemuan: item.target,
+          jps: item.jps || []
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'teachingScheduleMultiBatch');
+      throw e;
+    }
+  },
+
   // Settings
   initializeSettings: async () => {
     try {
