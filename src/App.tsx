@@ -8477,6 +8477,23 @@ export default function App() {
                           </div>
                         </div>
                       ))}
+
+                      {/* Tombol Tambah Kelas di Bagian Bawah Panel Mapel */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = [...assignmentBlocks];
+                          updated[bIdx].classes.push({
+                            id: Math.random().toString(),
+                            kelas: "",
+                            sessions: [{ hari: "Senin", target: 2, jps: [] }],
+                          });
+                          setAssignmentBlocks(updated);
+                        }}
+                        className="w-full py-2.5 bg-emerald-50/80 hover:bg-emerald-100/80 text-emerald-800 border-2 border-dashed border-emerald-300 hover:border-emerald-400 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs mt-2"
+                      >
+                        <Plus size={15} /> Tambah Kelas Lain untuk Mapel Ini
+                      </button>
                     </div>
                   </div>
                 ))}
