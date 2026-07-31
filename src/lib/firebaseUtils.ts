@@ -36,9 +36,11 @@ export function onQuotaExceeded(listener: QuotaListener) {
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMessage = error instanceof Error ? error.message : String(error);
   
-  const isQuota = errMessage.toLowerCase().includes('quota exceeded') || 
-                  errMessage.toLowerCase().includes('quota limit exceeded') ||
-                  errMessage.toLowerCase().includes('quota-exceeded');
+  const lowerErr = errMessage.toLowerCase();
+  const isQuota = lowerErr.includes('quota') || 
+                  lowerErr.includes('resource-exhausted') ||
+                  lowerErr.includes('resource_exhausted') ||
+                  lowerErr.includes('limit exceeded');
 
   if (isQuota && globalQuotaListener) {
     try {

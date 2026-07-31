@@ -14,7 +14,8 @@ import {
   Timestamp,
   addDoc,
   deleteField,
-  getCountFromServer
+  getCountFromServer,
+  writeBatch
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db, auth, defaultDb } from '../firebase';
@@ -683,12 +684,48 @@ export const firestoreService = {
 
   saveTeachingBatch: async (nip: string, namaGuru: string, schedules: {kelas: string, target: number, hari: string, jps?: number[]}[], mapel: string) => {
     try {
+      const batch = writeBatch(db);
       for (const item of schedules) {
         const id = `${nip}-${item.kelas}-${item.hari}`;
-        await setDoc(doc(db, 'teachingSchedules', id), {
+        const ref = doc(db, 'teachingSchedules', id);
+        batch.set(ref, {
           id, nip, namaGuru, kelas: item.kelas, targetPertemuan: item.target, mapel, hari: item.hari, jps: item.jps || []
         });
       }
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'teachingScheduleBatch');
+      throw e;
+    }
+  },
+
+  replaceTeachingBatch: async (
+    nip: string,
+    namaGuru: string,
+    mapel: string,
+    kelas: string,
+    oldScheduleIds: string[],
+    newSchedules: { kelas: string; target: number; hari: string; jps?: number[] }[]
+  ) => {
+    try {
+      const batch = writeBatch(db);
+      for (const id of oldScheduleIds) {
+        batch.delete(doc(db, 'teachingSchedules', id));
+      }
+      for (const item of newSchedules) {
+        const id = `${nip}-${item.kelas}-${item.hari}`;
+        batch.set(doc(db, 'teachingSchedules', id), {
+          id,
+          nip,
+          namaGuru,
+          kelas: item.kelas,
+          targetPertemuan: item.target,
+          mapel,
+          hari: item.hari,
+          jps: item.jps || []
+        });
+      }
+      await batch.commit();
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'teachingScheduleBatch');
       throw e;

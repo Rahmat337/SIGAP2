@@ -644,21 +644,45 @@ const getLocalISO = () => {
 };
 
 export default function App() {
-  const [students, setStudents] = useState<Student[]>([]);
+  const [students, setStudents] = useState<Student[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sigap_cache_students") || "[]");
+    } catch { return []; }
+  });
   const [studentUpdateRequests, setStudentUpdateRequests] = useState<
     StudentUpdateRequest[]
   >([]);
-  const [teachers, setTeachers] = useState<any[]>([]);
-  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [teachers, setTeachers] = useState<any[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sigap_cache_teachers") || "[]");
+    } catch { return []; }
+  });
+  const [classrooms, setClassrooms] = useState<Classroom[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sigap_cache_classrooms") || "[]");
+    } catch { return []; }
+  });
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [teacherAttendance, setTeacherAttendance] = useState<
     TeacherAttendance[]
   >([]);
-  const [settings, setSettings] = useState<DaySetting[]>([]);
+  const [settings, setSettings] = useState<DaySetting[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sigap_cache_settings") || "[]");
+    } catch { return []; }
+  });
   const [teachingSchedules, setTeachingSchedules] = useState<
     TeachingSchedule[]
-  >([]);
-  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  >(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sigap_cache_schedules") || "[]");
+    } catch { return []; }
+  });
+  const [holidays, setHolidays] = useState<Holiday[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sigap_cache_holidays") || "[]");
+    } catch { return []; }
+  });
   const [session, setSession] = useState<UserSession | null>(null);
 
   const [masterDataVersion, setMasterDataVersion] = useState(0);
@@ -1762,23 +1786,27 @@ export default function App() {
 
           const sData = studentsSnap.docs.map(
             (d) => ({ nisn: d.id, ...d.data() }) as Student,
-          );
-          setStudents(sData.sort((a, b) => a.nama.localeCompare(b.nama)));
+          ).sort((a, b) => a.nama.localeCompare(b.nama));
+          setStudents(sData);
+          try { localStorage.setItem("sigap_cache_students", JSON.stringify(sData)); } catch {}
 
           const tData = teachersSnap.docs.map(
             (d) => ({ nip: d.id, ...d.data() }) as Teacher,
-          );
-          setTeachers(tData.sort((a, b) => a.nama.localeCompare(b.nama)));
+          ).sort((a, b) => a.nama.localeCompare(b.nama));
+          setTeachers(tData);
+          try { localStorage.setItem("sigap_cache_teachers", JSON.stringify(tData)); } catch {}
 
-          const cData = classroomsSnap.docs.map((d) => d.data() as Classroom);
-          setClassrooms(cData.sort((a, b) => a.nama.localeCompare(b.nama)));
+          const cData = classroomsSnap.docs.map((d) => d.data() as Classroom)
+            .sort((a, b) => a.nama.localeCompare(b.nama));
+          setClassrooms(cData);
+          try { localStorage.setItem("sigap_cache_classrooms", JSON.stringify(cData)); } catch {}
 
-          setTeachingSchedules(
-            schedulesSnap.docs.map((d) => d.data() as TeachingSchedule),
-          );
+          const schedData = schedulesSnap.docs.map((d) => d.data() as TeachingSchedule);
+          setTeachingSchedules(schedData);
+          try { localStorage.setItem("sigap_cache_schedules", JSON.stringify(schedData)); } catch {}
         }
       } catch (err) {
-        console.error("Error loading master data: ", err);
+        console.warn("[SIGAP Cache] Master data load encountered network/quota limit. Utilizing local cached master data.", err);
       }
     };
 
@@ -7480,10 +7508,6 @@ export default function App() {
           ts.mapel === editingJadwal.mapel &&
           ts.kelas === editingJadwal.kelas,
       );
-      for (const old of teacherSchedules) {
-        await firestoreService.hapusJadwalMengajar(old.id);
-      }
-
       const g = teachers.find((t) => t.nip === editingJadwal.nip);
       // Ensure all sessions have the correct class from editingJadwal
       const finalSessions = teachingSessions.map((s) => ({
@@ -7491,11 +7515,13 @@ export default function App() {
         kelas: editingJadwal.kelas || "",
       }));
 
-      await firestoreService.saveTeachingBatch(
+      await firestoreService.replaceTeachingBatch(
         editingJadwal.nip,
         g?.nama || "",
-        finalSessions,
         editingJadwal.mapel || "",
+        editingJadwal.kelas || "",
+        teacherSchedules.map((old) => old.id),
+        finalSessions
       );
       refreshMasterData();
       setShowJadwalModal(false);
