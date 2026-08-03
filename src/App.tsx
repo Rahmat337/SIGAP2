@@ -995,6 +995,25 @@ export default function App() {
     });
   const [isInIframe, setIsInIframe] = useState(false);
 
+  // Smart Window state (05:30 to 10:00 AM)
+  const [smartWindowActive, setSmartWindowActive] = useState(() => {
+    const now = new Date();
+    const currentMin = now.getHours() * 60 + now.getMinutes();
+    return currentMin >= 5 * 60 + 30 && currentMin <= 10 * 60; // 05:30 - 10:00 AM
+  });
+
+  useEffect(() => {
+    const checkSmartWindow = () => {
+      const now = new Date();
+      const currentMin = now.getHours() * 60 + now.getMinutes();
+      const active = currentMin >= 5 * 60 + 30 && currentMin <= 10 * 60;
+      setSmartWindowActive((prev) => (prev !== active ? active : prev));
+    };
+    checkSmartWindow();
+    const timer = setInterval(checkSmartWindow, 20000);
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       setIsInIframe(window.self !== window.top);
@@ -1026,6 +1045,9 @@ export default function App() {
 
   const triggerParentNotification = useCallback(
     (title: string, body: string) => {
+      // Strictly restrict to Siswa role (parents logged into student dashboard)
+      if (session?.role !== "Siswa") return;
+
       // 1. Browser Native push notification
       if (
         typeof window !== "undefined" &&
@@ -1045,7 +1067,7 @@ export default function App() {
       // 2. Beautiful app success toast as active indicator
       triggerSuccess(title.toUpperCase(), body);
     },
-    [appConfig.logoUrl],
+    [session?.role, appConfig.logoUrl],
   );
 
   // Monitor student attendance records live for Parent Notifications
@@ -1096,24 +1118,51 @@ export default function App() {
       // New attendance record created for today
       if (!prev) {
         if (a.jam) {
+          const studentName = a.nama || session.name || "Siswa";
+          let ketMsg = "";
+          if (a.terlambat && a.terlambat > 0) {
+            const h = Math.floor(a.terlambat / 60);
+            const m = a.terlambat % 60;
+            const lateText = h > 0 ? `${h} jam ${m} menit` : `${m} menit`;
+            ketMsg = `terlambat ${lateText}`;
+          } else if (a.status === "Hadir") {
+            ketMsg = "tepat waktu";
+          } else {
+            ketMsg = a.keterangan || a.status || "hadir";
+          }
+
           triggerParentNotification(
-            "📍 Presensi Masuk Siswa",
-            `Anak Anda (${a.nama}) telah terdeteksi hadir di madrasah pada pukul ${a.jam}. Status: ${a.status || "Hadir"}.`,
+            "📍 Presensi Kehadiran Siswa",
+            `Ananda ${studentName} hari ini hadir di madrasah pukul ${a.jam} dengan keterangan ${ketMsg}.`,
           );
         }
       }
-      // Update on today's record (e.g. status status or check-in speed)
+      // Update on today's record
       else {
         if (a.jam && prev.jam !== a.jam) {
+          const studentName = a.nama || session.name || "Siswa";
+          let ketMsg = "";
+          if (a.terlambat && a.terlambat > 0) {
+            const h = Math.floor(a.terlambat / 60);
+            const m = a.terlambat % 60;
+            const lateText = h > 0 ? `${h} jam ${m} menit` : `${m} menit`;
+            ketMsg = `terlambat ${lateText}`;
+          } else if (a.status === "Hadir") {
+            ketMsg = "tepat waktu";
+          } else {
+            ketMsg = a.keterangan || a.status || "hadir";
+          }
+
           triggerParentNotification(
-            "📍 Update Kehadiran",
-            `Update: Anak Anda (${a.nama}) terpantau masuk pada pukul ${a.jam}. Status: ${a.status || "Hadir"}.`,
+            "📍 Presensi Kehadiran Siswa",
+            `Update: Ananda ${studentName} hari ini hadir di madrasah pukul ${a.jam} dengan keterangan ${ketMsg}.`,
           );
         }
         if (a.jamPulang && !prev.jamPulang) {
+          const studentName = a.nama || session.name || "Siswa";
           triggerParentNotification(
             "🚪 Presensi Pulang Siswa",
-            `Anak Anda (${a.nama}) telah melakukan presensi PULANG dari madrasah pada pukul ${a.jamPulang}.`,
+            `Ananda ${studentName} telah melakukan presensi PULANG dari madrasah pada pukul ${a.jamPulang}.`,
           );
         }
       }
@@ -1531,13 +1580,23 @@ export default function App() {
 
     // 2. Performance & Quota Optimization dynamically applied for logs
     if (role === "Siswa") {
-      unsubAttendance = onSnapshot(
-        query(collection(db, "attendance"), where("nisn", "==", uid)),
-        (snap) => {
-          setAttendance(snap.docs.map((d) => d.data() as Attendance));
-        },
-        (error) => handleFirestoreError(error, OperationType.GET, "attendance"),
-      );
+      if (smartWindowActive) {
+        // Smart listener ACTIVE (05:30 - 10:00 AM) -> real-time onSnapshot!
+        unsubAttendance = onSnapshot(
+          query(collection(db, "attendance"), where("nisn", "==", uid)),
+          (snap) => {
+            setAttendance(snap.docs.map((d) => d.data() as Attendance));
+          },
+          (error) => handleFirestoreError(error, OperationType.GET, "attendance"),
+        );
+      } else {
+        // Outside smart window (10:01 AM - 05:29 AM) -> fetch once to conserve 100% quota!
+        getDocs(query(collection(db, "attendance"), where("nisn", "==", uid)))
+          .then((snap) => {
+            setAttendance(snap.docs.map((d) => d.data() as Attendance));
+          })
+          .catch((err) => handleFirestoreError(err, OperationType.GET, "attendance"));
+      }
     } else if (role === "Guru") {
       if (isLeadership) {
         unsubAttendance = onSnapshot(
@@ -1678,6 +1737,7 @@ export default function App() {
     session?.kelas,
     session?.isWali,
     session?.jabatan,
+    smartWindowActive,
   ]);
 
   // One-time Fetch for master data (students, teachers, classrooms, schedules)
@@ -9053,6 +9113,166 @@ export default function App() {
                   Layanan Aktif / Real-time
                 </div>
               </div>
+
+              {/* Panel Notifikasi Orang Tua (Opsi B - Smart Listener 05:30 - 10:00) */}
+              {session?.role === "Siswa" && (
+                <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4 relative overflow-hidden">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-gray-100 pb-4">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
+                          smartWindowActive
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-zinc-100 text-zinc-500"
+                        }`}
+                      >
+                        <Bell
+                          className={smartWindowActive ? "animate-bounce" : ""}
+                          size={22}
+                        />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-black text-green-950 uppercase tracking-wider">
+                            Smart Notifikasi Orang Tua (Opsi B)
+                          </h3>
+                          {smartWindowActive ? (
+                            <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2.5 py-0.5 rounded-full border border-emerald-200 uppercase tracking-widest flex items-center gap-1.5 animate-pulse">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                              Smart Listener Aktif (05:30 - 10:00)
+                            </span>
+                          ) : (
+                            <span className="bg-zinc-100 text-zinc-600 text-[9px] font-black px-2.5 py-0.5 rounded-full border border-zinc-200 uppercase tracking-widest flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                              Standby (Di Luar 05:30 - 10:00)
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+                          Notifikasi otomatis terkirim langsung ke HP/Browser orang tua saat ananda melakukan presensi barcode di madrasah.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Toggle Notifikasi Button */}
+                    <div className="flex items-center gap-3 shrink-0">
+                      <button
+                        onClick={() => {
+                          const next = !parentNotifEnabled;
+                          setParentNotifEnabled(next);
+                          localStorage.setItem(
+                            "parent_notif_enabled",
+                            String(next),
+                          );
+                          if (
+                            next &&
+                            typeof window !== "undefined" &&
+                            "Notification" in window &&
+                            Notification.permission !== "granted"
+                          ) {
+                            Notification.requestPermission().then((perm) => {
+                              setNotifPermission(perm);
+                            });
+                          }
+                        }}
+                        className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+                          parentNotifEnabled
+                            ? "bg-green-700 text-white shadow-sm hover:bg-green-800"
+                            : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                        }`}
+                      >
+                        <BellRing size={15} />
+                        {parentNotifEnabled ? "Notifikasi Orang Tua ON" : "Notifikasi OFF"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Operational indicators */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-zinc-50 p-3.5 rounded-2xl border border-zinc-100 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-green-100 text-green-700 flex items-center justify-center font-black text-xs shrink-0">
+                        ⏰
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">
+                          Durasi Smart Listener
+                        </p>
+                        <p className="text-xs font-black text-zinc-800">
+                          05:30 s.d 10:00 Pagi
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-50 p-3.5 rounded-2xl border border-zinc-100 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-black text-xs shrink-0">
+                        ⚡
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">
+                          Status Web Push HP
+                        </p>
+                        <p className="text-xs font-black text-zinc-800">
+                          {notifPermission === "granted" ? (
+                            <span className="text-emerald-700">
+                              ✓ In-App & Push HP Aktif
+                            </span>
+                          ) : (
+                            <span className="text-amber-700">
+                              In-App Banner (Minta Izin)
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-50 p-3.5 rounded-2xl border border-zinc-100 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-black text-xs shrink-0">
+                        🛡️
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">
+                          Penghematan Kuota
+                        </p>
+                        <p className="text-xs font-black text-emerald-700">
+                          Opsi B (Hemat 100% di Luar Jam)
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Browser notification permission request if not granted */}
+                  {typeof window !== "undefined" &&
+                    "Notification" in window &&
+                    notifPermission !== "granted" && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5">
+                          <AlertCircle size={18} className="text-amber-600 shrink-0" />
+                          <p className="text-xs font-bold text-amber-900">
+                            Aktifkan izin notifikasi browser agar HP orang tua berbunyi / muncul pop-up saat anak tiba di sekolah.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if ("Notification" in window) {
+                              Notification.requestPermission().then((perm) => {
+                                setNotifPermission(perm);
+                                if (perm === "granted") {
+                                  triggerSuccess(
+                                    "NOTIFIKASI AKTIF",
+                                    "Izin notifikasi browser berhasil diberikan!",
+                                  );
+                                }
+                              });
+                            }
+                          }}
+                          className="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-black px-4 py-2 rounded-xl uppercase tracking-wider shrink-0 transition-colors shadow-xs"
+                        >
+                          Berikan Izin Notifikasi
+                        </button>
+                      </div>
+                    )}
+                </div>
+              )}
 
               {/* Stats Grid */}
               <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
