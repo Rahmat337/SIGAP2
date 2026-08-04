@@ -1323,6 +1323,12 @@ export default function App() {
   const [waliFilterTanggal, setWaliFilterTanggal] = useState(
     getWitaISO(),
   );
+
+  useEffect(() => {
+    if (activePanel === "siswa-personal" || session?.role === "Siswa") {
+      setSiswaDashboardDate(getWitaISO());
+    }
+  }, [activePanel, session?.uid]);
   const [waliFilterNama, setWaliFilterNama] = useState("");
   const [waliFilterStatus, setWaliFilterStatus] = useState("");
   const [waliPagination, setWaliPagination] = useState(0);
@@ -1992,9 +1998,9 @@ export default function App() {
     // Chart data (last 7 days)
     const chartData = [];
     for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split("T")[0];
+      const nowMs = Date.now() - i * 24 * 60 * 60 * 1000;
+      const d = new Date(nowMs);
+      const dateStr = getWitaISO(d);
       const dayRekap = rekapDailyList.find((r) => r.tanggal === dateStr);
 
       if (dayRekap) {
@@ -2061,7 +2067,7 @@ export default function App() {
 
   // Reporting states
   const [rekapFilter, setRekapFilter] = useState({
-    bulan: new Date().toISOString().slice(0, 7),
+    bulan: getWitaISO().slice(0, 7),
     kelas: "",
     type: "Siswa",
   });
@@ -4862,7 +4868,7 @@ export default function App() {
   } | null>(null);
   const [newLibur, setNewLibur] = useState({ tanggal: "", keterangan: "" });
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() =>
-    new Date().toISOString().slice(0, 7),
+    getWitaISO().slice(0, 7),
   );
 
   const [showCelebration, setShowCelebration] = useState(false);
@@ -5499,7 +5505,7 @@ export default function App() {
     nisn: "",
     status: "Hadir",
     ket: "",
-    tanggal: new Date().toISOString().split("T")[0],
+    tanggal: getWitaISO(),
   });
   const [selectedStudentCard, setSelectedStudentCard] =
     useState<Student | null>(null);
@@ -9087,12 +9093,7 @@ export default function App() {
                       Hari Ini / Tanggal
                     </p>
                     <h2 className="text-xl sm:text-2xl font-black text-green-950 mt-1 whitespace-nowrap">
-                      {new Date().toLocaleDateString("id-ID", {
-                        weekday: "long",
-                        day: "numeric",
-                        month: "long",
-                        year: "numeric",
-                      })}
+                      {formatIndoDate(getWitaISO())}
                     </h2>
                   </div>
                 </div>
@@ -9583,8 +9584,7 @@ export default function App() {
                           "Jumat",
                           "Sabtu",
                         ];
-                        const todayDayName =
-                          IndonesianDays[new Date().getDay()];
+                        const todayDayName = getWitaDayName();
 
                         if (todayDayName === "Minggu") {
                           return (
@@ -9595,9 +9595,7 @@ export default function App() {
                           );
                         }
 
-                        const todayDateStr = new Date().toLocaleDateString(
-                          "en-CA",
-                        );
+                        const todayDateStr = getWitaISO();
                         const todaySetting = settings.find(
                           (st) => st.hari === todayDayName,
                         );
@@ -10301,8 +10299,7 @@ export default function App() {
                           "Jumat",
                           "Sabtu",
                         ];
-                        const todayDayName =
-                          IndonesianDays[new Date().getDay()];
+                        const todayDayName = getWitaDayName();
 
                         if (todayDayName === "Minggu") {
                           return (
@@ -10314,9 +10311,7 @@ export default function App() {
                         }
 
                         // Get currently logged-in teacher's schedules for today
-                        const todayDateStr = new Date().toLocaleDateString(
-                          "en-CA",
-                        );
+                        const todayDateStr = getWitaISO();
                         const myTodaySchedules = teachingSchedules.filter(
                           (s) =>
                             s.nip === session?.uid && s.hari === todayDayName,
@@ -10771,12 +10766,7 @@ export default function App() {
                 <div className="inline-block px-4 py-2 bg-white rounded-full shadow-sm border border-zinc-100 mb-2">
                   <span className="text-xs font-black text-green-900 uppercase tracking-widest flex items-center gap-2">
                     <Calendar size={14} />
-                    {new Date().toLocaleDateString("id-ID", {
-                      weekday: "long",
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric",
-                    })}
+                    {formatIndoDate(getWitaISO())}
                   </span>
                 </div>
                 <h2 className="text-2xl font-black text-green-950">
@@ -11826,10 +11816,7 @@ export default function App() {
                                       </span>
                                       <span className="text-[9px] font-bold text-gray-400 italic">
                                         Bulan Ini (
-                                        {new Date().toLocaleDateString(
-                                          "id-ID",
-                                          { month: "long" },
-                                        )}
+                                        {new Intl.DateTimeFormat("id-ID", { timeZone: WITA_TIMEZONE, month: "long" }).format(new Date())}
                                         )
                                       </span>
                                     </div>
@@ -12991,11 +12978,7 @@ export default function App() {
                               status: siswaAbsensiManual.status,
                               keterangan: siswaAbsensiManual.ket,
                               tanggal: siswaAbsensiManual.tanggal,
-                              jam: new Date().toLocaleTimeString("id-ID", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                hour12: false,
-                              }),
+                              jam: getWitaTimeString(),
                             });
                             alert("Absensi berhasil disimpan!");
                           } catch (e) {
@@ -17225,7 +17208,7 @@ export default function App() {
                                     (a) =>
                                       a.nisn === session?.uid &&
                                       a.tanggal.startsWith(
-                                        new Date().toISOString().slice(0, 7),
+                                        getWitaISO().slice(0, 7),
                                       ),
                                   ).length
                                 }
