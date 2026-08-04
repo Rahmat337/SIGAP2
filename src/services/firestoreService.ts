@@ -25,6 +25,7 @@ import {
   StudentUpdateRequest
 } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
+import { getWitaISO, getWitaDayName, getWitaTimeString } from '../lib/dateUtils';
 
 // Memory Caching & Rate-Limiting for Morning Scan Peak Resource Management
 const holidayCache: { [tanggal: string]: { data: Holiday | null, expires: number } } = {};
@@ -420,14 +421,13 @@ export const firestoreService = {
       const student = studentDoc.data() as Student;
       
       const now = new Date();
-      const dayMap = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-      const dayName = dayMap[now.getDay()];
+      const dayName = getWitaDayName(now);
       
       if (dayName === "Minggu") {
         return { success: false, message: "Hari Minggu adalah hari libur." };
       }
 
-      const tanggal = now.toISOString().split('T')[0];
+      const tanggal = getWitaISO(now);
       const nowMs = Date.now();
 
       // 1. Memory Caching for Holiday status during peak rush
@@ -444,7 +444,7 @@ export const firestoreService = {
         return { success: false, message: `Hari Libur: ${holidayData.keterangan}` };
       }
 
-      const jam = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const jam = getWitaTimeString(now);
       
       const id = `${nisn}-${tanggal}`;
       const existing = await getDoc(doc(db, 'attendance', id));
@@ -467,9 +467,8 @@ export const firestoreService = {
         if (settingsData.pulang) cutoffPulang = settingsData.pulang;
       }
 
-      // Calculate total minutes for robust comparison
-      const hNow = now.getHours();
-      const mNow = now.getMinutes();
+      // Calculate total minutes for robust comparison in WITA
+      const [hNow, mNow] = jam.split(':').map(Number);
       const currentMinutes = hNow * 60 + mNow;
       const [hMasuk, mMasuk] = cutoffMasuk.split(':').map(Number);
       const [hPulang, mPulang] = cutoffPulang.split(':').map(Number);
@@ -555,15 +554,14 @@ export const firestoreService = {
       const teacher = teacherDoc.data() as Teacher;
 
       const now = new Date();
-      const dayMap = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-      const dayName = dayMap[now.getDay()];
+      const dayName = getWitaDayName(now);
 
       if (dayName === "Minggu") {
         return { success: false, message: "Hari Minggu tidak ada jadwal mengajar." };
       }
 
       // Check for holiday
-      const tanggal = now.toISOString().split('T')[0];
+      const tanggal = getWitaISO(now);
 
       // Block scanning if teacher has active leave status (Izin/Sakit/Alfa) for today
       try {
@@ -600,7 +598,7 @@ export const firestoreService = {
         if (s.pulang) cutoffPulang = s.pulang;
       }
 
-      const jam = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const jam = getWitaTimeString(now);
       const [hNow, mNow] = jam.split(':').map(Number);
       const [hPulang, mPulang] = cutoffPulang.split(':').map(Number);
       
@@ -959,10 +957,7 @@ export const firestoreService = {
 
       // Check if it's holiday
       const holidayDoc = await getDoc(doc(db, 'holidays', tanggal));
-      const dayMap = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-      const parts = tanggal.split('-').map(Number);
-      const dDate = new Date(parts[0], parts[1] - 1, parts[2]);
-      const dayName = dayMap[dDate.getDay()];
+      const dayName = getWitaDayName(tanggal);
       const isHoliday = holidayDoc.exists() || dayName === 'Minggu';
 
       const alfaCount = isHoliday ? 0 : (recordedAlfa + notYetCheckedIn);
@@ -978,7 +973,7 @@ export const firestoreService = {
         sakitCount,
         izinCount,
         alfaCount,
-        lastUpdated: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        lastUpdated: getWitaTimeString()
       };
 
       await setDoc(doc(db, 'rekapSiswa', tanggal), summary);

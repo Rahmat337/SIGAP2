@@ -72,6 +72,13 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { firestoreService } from "./services/firestoreService";
 import { SiswaBadgesPanel } from "./components/SiswaBadgesPanel";
+import {
+  getWitaISO,
+  getWitaDayName,
+  getWitaTimeString,
+  getLocalISO,
+  WITA_TIMEZONE,
+} from "./lib/dateUtils";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -221,8 +228,9 @@ const formatIndoDate = (dateStr: string) => {
     // Handle YYYY-MM-DD to avoid timezone shifting
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       const [y, m, d] = dateStr.split("-").map(Number);
-      const date = new Date(y, m - 1, d);
+      const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
       return new Intl.DateTimeFormat("id-ID", {
+        timeZone: WITA_TIMEZONE,
         weekday: "long",
         day: "numeric",
         month: "long",
@@ -232,6 +240,7 @@ const formatIndoDate = (dateStr: string) => {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return new Intl.DateTimeFormat("id-ID", {
+      timeZone: WITA_TIMEZONE,
       weekday: "long",
       day: "numeric",
       month: "long",
@@ -247,8 +256,9 @@ const formatIndoDateNoDay = (dateStr: string) => {
   try {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       const [y, m, d] = dateStr.split("-").map(Number);
-      const date = new Date(y, m - 1, d);
+      const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
       return new Intl.DateTimeFormat("id-ID", {
+        timeZone: WITA_TIMEZONE,
         day: "numeric",
         month: "long",
         year: "numeric",
@@ -257,6 +267,7 @@ const formatIndoDateNoDay = (dateStr: string) => {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return new Intl.DateTimeFormat("id-ID", {
+      timeZone: WITA_TIMEZONE,
       day: "numeric",
       month: "long",
       year: "numeric",
@@ -268,22 +279,7 @@ const formatIndoDateNoDay = (dateStr: string) => {
 
 const getIndonesianDay = (dateStr: string) => {
   if (!dateStr) return "-";
-  try {
-    const [year, month, day] = dateStr.split("-").map(Number);
-    const date = new Date(year, month - 1, day);
-    const dayNames = [
-      "Minggu",
-      "Senin",
-      "Selasa",
-      "Rabu",
-      "Kamis",
-      "Jumat",
-      "Sabtu",
-    ];
-    return dayNames[date.getDay()] || "-";
-  } catch (e) {
-    return "-";
-  }
+  return getWitaDayName(dateStr);
 };
 
 const getMonthYearText = (monthStr: string) => {
@@ -638,11 +634,6 @@ const formatMinutes = (minutes: number) => {
   return `${m} menit`;
 };
 
-const getLocalISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
 export default function App() {
   const [students, setStudents] = useState<Student[]>(() => {
     try {
@@ -800,14 +791,9 @@ export default function App() {
 
   const processOfflineScan = useCallback((scannedId: string, type: "Siswa" | "Kelas") => {
     const now = new Date();
-    const dayMap = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-    const dayName = dayMap[now.getDay()];
-    const tanggal = now.toISOString().split("T")[0];
-    const jam = now.toLocaleTimeString("id-ID", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
+    const dayName = getWitaDayName(now);
+    const tanggal = getWitaISO(now);
+    const jam = getWitaTimeString(now);
 
     if (dayName === "Minggu") {
       return { success: false, message: "Absen Gagal: Hari Minggu libur (Offline Mode)." };
@@ -841,7 +827,8 @@ export default function App() {
       const sDay = settings.find((s) => s.hari === dayName);
       if (sDay?.masuk) cutoffMasuk = sDay.masuk;
 
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const [hNow, mNow] = jam.split(":").map(Number);
+      const currentMinutes = hNow * 60 + mNow;
       const [hMasuk, mMasuk] = cutoffMasuk.split(":").map(Number);
       const masukMinutes = hMasuk * 60 + mMasuk;
       const late = currentMinutes - masukMinutes;
@@ -995,17 +982,19 @@ export default function App() {
     });
   const [isInIframe, setIsInIframe] = useState(false);
 
-  // Smart Window state (05:30 to 10:00 AM)
+  // Smart Window state (05:30 to 10:00 AM WITA)
   const [smartWindowActive, setSmartWindowActive] = useState(() => {
-    const now = new Date();
-    const currentMin = now.getHours() * 60 + now.getMinutes();
-    return currentMin >= 5 * 60 + 30 && currentMin <= 10 * 60; // 05:30 - 10:00 AM
+    const jam = getWitaTimeString();
+    const [h, m] = jam.split(":").map(Number);
+    const currentMin = h * 60 + m;
+    return currentMin >= 5 * 60 + 30 && currentMin <= 10 * 60; // 05:30 - 10:00 AM WITA
   });
 
   useEffect(() => {
     const checkSmartWindow = () => {
-      const now = new Date();
-      const currentMin = now.getHours() * 60 + now.getMinutes();
+      const jam = getWitaTimeString();
+      const [h, m] = jam.split(":").map(Number);
+      const currentMin = h * 60 + m;
       const active = currentMin >= 5 * 60 + 30 && currentMin <= 10 * 60;
       setSmartWindowActive((prev) => (prev !== active ? active : prev));
     };
@@ -1078,7 +1067,7 @@ export default function App() {
       return;
     }
 
-    const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+    const todayStr = getWitaISO(); // YYYY-MM-DD WITA
     const studentAttendance = attendance.filter((a) => a.nisn === session.uid);
 
     if (isFirstLoadRef.current) {
@@ -1209,8 +1198,7 @@ export default function App() {
     if (!analysisMonth) return [];
     try {
       const [y, m] = analysisMonth.split("-").map(Number);
-      const now = new Date();
-      const currentMonthPrefix = now.toISOString().slice(0, 7);
+      const currentMonthPrefix = getWitaISO().slice(0, 7);
 
       let limit;
       if (analysisMonth < currentMonthPrefix) {
@@ -1330,10 +1318,10 @@ export default function App() {
   const [filterAdminSiswaClass, setFilterAdminSiswaClass] = useState("");
   const [filterJadwalClass, setFilterJadwalClass] = useState("");
   const [siswaDashboardDate, setSiswaDashboardDate] = useState(
-    new Date().toISOString().split("T")[0],
+    getWitaISO(),
   );
   const [waliFilterTanggal, setWaliFilterTanggal] = useState(
-    new Date().toISOString().split("T")[0],
+    getWitaISO(),
   );
   const [waliFilterNama, setWaliFilterNama] = useState("");
   const [waliFilterStatus, setWaliFilterStatus] = useState("");
