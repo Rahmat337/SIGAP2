@@ -174,6 +174,9 @@ const triggerSuccessFeedback = () => {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     if (AudioContext) {
       const ctx = new AudioContext();
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
       const playBeep = (freq1: number, freq2: number, startTime: number, duration: number, volume: number) => {
         const osc1 = ctx.createOscillator();
         const gain1 = ctx.createGain();
@@ -181,8 +184,8 @@ const triggerSuccessFeedback = () => {
         osc1.frequency.setValueAtTime(freq1, startTime);
         
         gain1.gain.setValueAtTime(0, startTime);
-        gain1.gain.linearRampToValueAtTime(volume, startTime + 0.02);
-        gain1.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        gain1.gain.linearRampToValueAtTime(volume, startTime + 0.01);
+        gain1.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
         
         osc1.connect(gain1);
         gain1.connect(ctx.destination);
@@ -193,8 +196,8 @@ const triggerSuccessFeedback = () => {
         osc2.frequency.setValueAtTime(freq2, startTime);
         
         gain2.gain.setValueAtTime(0, startTime);
-        gain2.gain.linearRampToValueAtTime(volume * 0.5, startTime + 0.02);
-        gain2.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        gain2.gain.linearRampToValueAtTime(volume * 0.4, startTime + 0.01);
+        gain2.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
         
         osc2.connect(gain2);
         gain2.connect(ctx.destination);
@@ -205,9 +208,9 @@ const triggerSuccessFeedback = () => {
         osc2.stop(startTime + duration);
       };
       
-      // Satisfying double deep beep
-      playBeep(210, 315, ctx.currentTime, 0.12, 0.5);
-      playBeep(210, 315, ctx.currentTime + 0.15, 0.18, 0.5);
+      // Clear, crisp scanner dual-tone beep for successful attendance (1400Hz & 1800Hz)
+      playBeep(1400, 1800, ctx.currentTime, 0.1, 0.6);
+      playBeep(1800, 2200, ctx.currentTime + 0.12, 0.1, 0.6);
     }
   } catch (e) {
     console.warn("Audio feedback error:", e);
@@ -1204,7 +1207,7 @@ export default function App() {
       if (analysisMonth < currentMonthPrefix) {
         limit = new Date(y, m, 0).getDate();
       } else if (analysisMonth === currentMonthPrefix) {
-        limit = now.getDate();
+        limit = new Date().getDate();
       } else {
         limit = 0;
       }
@@ -1332,6 +1335,7 @@ export default function App() {
   const [waliFilterNama, setWaliFilterNama] = useState("");
   const [waliFilterStatus, setWaliFilterStatus] = useState("");
   const [waliPagination, setWaliPagination] = useState(0);
+  const [kamadStatusFilter, setKamadStatusFilter] = useState("all");
 
   const [pagination, setPagination] = useState({
     guru: 0,
@@ -4340,11 +4344,21 @@ export default function App() {
           );
           const dayNum = date.split("-")[2];
           if (rec) {
-            rowData[`Tanggal ${dayNum}`] = rec.status === "Hadir" ? "✓" : rec.status.charAt(0);
-            if (rec.status === "Hadir") hCount++;
-            else if (rec.status === "Sakit") sCount++;
-            else if (rec.status === "Izin") iCount++;
-            else if (rec.status === "Alfa") aCount++;
+            if (rec.status === "Hadir") {
+              rowData[`Tanggal ${dayNum}`] = "✓";
+              hCount++;
+            } else if (rec.status === "Sakit") {
+              rowData[`Tanggal ${dayNum}`] = "S";
+              sCount++;
+            } else if (rec.status === "Izin") {
+              rowData[`Tanggal ${dayNum}`] = "I";
+              iCount++;
+            } else if (rec.status === "Alfa") {
+              rowData[`Tanggal ${dayNum}`] = "-";
+              aCount++;
+            } else {
+              rowData[`Tanggal ${dayNum}`] = "-";
+            }
           } else {
             rowData[`Tanggal ${dayNum}`] = "-";
           }
@@ -4374,10 +4388,10 @@ export default function App() {
     // Handle PDF download
     const handleExportPDF = async () => {
       if (modalStudents.length === 0) return;
-      const doc = new jsPDF("l", "mm", [330, 215]);
+      const doc = new jsPDF("p", "mm", [215, 330]);
       toggleLoader(true);
       try {
-        await addKopToDoc(doc, "l");
+        await addKopToDoc(doc, "p");
       } catch (e) {
         console.error("Error adding KOP:", e);
       } finally {
@@ -4385,13 +4399,14 @@ export default function App() {
       }
 
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("REKAPITULASI KEHADIRAN SISWA BULANAN", 14, 35);
+      doc.setFontSize(11);
+      doc.text("REKAPITULASI KEHADIRAN SISWA BULANAN", 107.5, 32, { align: "center" });
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text(`Guru Pengajar : ${resolvedTeacherName || "-"}`, 14, 41);
-      doc.text(`Mata Pelajaran : ${mapel} | Kelas: ${kelas}`, 14, 46);
-      doc.text(`Periode Bulan  : ${getMonthYearText(bulan)}`, 14, 51);
+      doc.setFontSize(8);
+      doc.text(`Guru Pengajar : ${resolvedTeacherName || "-"}`, 10, 37);
+      doc.text(`Mata Pelajaran : ${mapel} | Kelas: ${kelas}`, 10, 41);
+      doc.text(`Periode Bulan  : ${getMonthYearText(bulan)}`, 10, 45);
+      doc.text("Keterangan: ✓ = Hadir | S = Sakit | I = Izin | - = Alfa / Tidak Absen", 207, 45, { align: "right" });
 
       const headers = [
         "No",
@@ -4419,7 +4434,7 @@ export default function App() {
             if (rec.status === "Hadir") { hCount++; return "✓"; }
             if (rec.status === "Sakit") { sCount++; return "S"; }
             if (rec.status === "Izin") { iCount++; return "I"; }
-            if (rec.status === "Alfa") { aCount++; return "A"; }
+            if (rec.status === "Alfa") { aCount++; return "-"; }
           }
           return "-";
         });
@@ -4441,15 +4456,40 @@ export default function App() {
         ];
       });
 
+      // Calculate dynamic font size & cell padding so everything stays strictly on 1 page (1 lembar portrait)
+      const totalRows = modalStudents.length + 1;
+      let computedFontSize = 8.5;
+      let computedPadding = 0.9;
+
+      if (totalRows > 40) {
+        computedFontSize = 7.0;
+        computedPadding = 0.5;
+      } else if (totalRows > 30) {
+        computedFontSize = 7.5;
+        computedPadding = 0.65;
+      } else if (totalRows > 20) {
+        computedFontSize = 8.0;
+        computedPadding = 0.8;
+      }
+
       autoTable(doc, {
-        startY: 56,
+        startY: 48,
         head: [headers],
         body: rows,
         theme: "grid",
-        styles: { fontSize: 7, cellPadding: 1 },
+        margin: { top: 48, bottom: 8, left: 8, right: 8 },
+        styles: {
+          fontSize: computedFontSize,
+          cellPadding: computedPadding,
+          halign: "center",
+          valign: "middle",
+          overflow: "ellipsize",
+        },
         columnStyles: {
-          1: { halign: "left" }
-        }
+          0: { cellWidth: 8, halign: "center" },
+          1: { cellWidth: 48, halign: "left" },
+          2: { cellWidth: 22, halign: "center" },
+        },
       });
 
       doc.save(`Rekap_Bulanan_${mapel}_Kls_${kelas}_${bulan}.pdf`);
@@ -9620,306 +9660,631 @@ export default function App() {
                           );
                         }
 
-                        const teachersTeachingToday = filteredTeachers.filter(
-                          (t) =>
-                            teachingSchedules.some(
-                              (s) => s.nip === t.nip && s.hari === todayDayName,
-                            ),
+                        const limitJp = todayDayName === "Jumat" ? 6 : 8;
+
+                        const parseTimeToMinutes = (tStr: string) => {
+                          if (!tStr) return 0;
+                          const parts = tStr.split(":");
+                          if (parts.length < 2) return 0;
+                          return (
+                            parseInt(parts[0]) * 60 + parseInt(parts[1])
+                          );
+                        };
+
+                        const currentMin = parseTimeToMinutes(
+                          currentTime || "00:00",
+                        );
+
+                        const getJpStartEnd = (
+                          jp: number,
+                          jpTimesFromDb: any,
+                          limit: number,
+                        ) => {
+                          if (
+                            jpTimesFromDb?.[jp]?.start &&
+                            jpTimesFromDb?.[jp]?.end
+                          ) {
+                            return {
+                              start: jpTimesFromDb[jp].start,
+                              end: jpTimesFromDb[jp].end,
+                            };
+                          }
+                          let startHour = 7;
+                          let startMin = 15;
+                          for (let i = 1; i < jp; i++) {
+                            if (i === 4) {
+                              startMin += 20;
+                            }
+                            startMin += 40;
+                          }
+                          startHour += Math.floor(startMin / 60);
+                          startMin = startMin % 60;
+
+                          let endHour = startHour;
+                          let endMin = startMin + 40;
+                          endHour += Math.floor(endMin / 60);
+                          endMin = endMin % 60;
+
+                          return {
+                            start: `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}`,
+                            end: `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`,
+                          };
+                        };
+
+                        // Pre-compute teacher statuses for today
+                        const computedTeachers = filteredTeachers.map(
+                          (teacher) => {
+                            const teacherSchedulesToday =
+                              teachingSchedules.filter(
+                                (s) =>
+                                  s.nip === teacher.nip &&
+                                  s.hari === todayDayName,
+                              );
+                            const isTeachingToday =
+                              teacherSchedulesToday.length > 0;
+
+                            const teachDetailList = teacherSchedulesToday.map(
+                              (sched) => {
+                                const schedJps = sched.jps || [];
+                                const minJp =
+                                  schedJps.length > 0
+                                    ? Math.min(...schedJps)
+                                    : 1;
+                                const maxJp =
+                                  schedJps.length > 0
+                                    ? Math.max(...schedJps)
+                                    : 1;
+
+                                const startJpTimes = getJpStartEnd(
+                                  minJp,
+                                  todaySetting?.jpTimes,
+                                  limitJp,
+                                );
+                                const endJpTimes = getJpStartEnd(
+                                  maxJp,
+                                  todaySetting?.jpTimes,
+                                  limitJp,
+                                );
+
+                                const startTimeStr = startJpTimes.start;
+                                const endTimeStr = endJpTimes.end;
+
+                                const startMin =
+                                  parseTimeToMinutes(startTimeStr);
+                                const endMin =
+                                  parseTimeToMinutes(endTimeStr);
+
+                                const attendanceRecord =
+                                  teacherAttendance.find(
+                                    (ta) =>
+                                      ta.nip === teacher.nip &&
+                                      ta.kelas === sched.kelas &&
+                                      ta.tanggal === todayDateStr,
+                                  );
+
+                                const scanned = !!attendanceRecord;
+                                const scanTime =
+                                  attendanceRecord?.jam || "";
+
+                                const activeJpsList =
+                                  todaySetting?.activeJps &&
+                                  Array.isArray(todaySetting.activeJps)
+                                    ? todaySetting.activeJps
+                                    : Array.from(
+                                        {
+                                          length:
+                                            todayDayName === "Jumat" ? 6 : 8,
+                                        },
+                                        (_, i) => i + 1,
+                                      );
+
+                                const isJpInactive = schedJps.some(
+                                  (jp) => !activeJpsList.includes(jp),
+                                );
+
+                                let schedState:
+                                  | "PASSED"
+                                  | "ACTIVE"
+                                  | "STANDBY"
+                                  | "INACTIVE" = "STANDBY";
+                                if (isJpInactive) {
+                                  schedState = "INACTIVE";
+                                } else if (currentMin < startMin) {
+                                  schedState = "STANDBY";
+                                } else if (
+                                  currentMin >= startMin &&
+                                  currentMin <= endMin
+                                ) {
+                                  schedState = "ACTIVE";
+                                } else {
+                                  schedState = "PASSED";
+                                }
+
+                                return {
+                                  kelas: sched.kelas,
+                                  mapel: sched.mapel || "Mata Pelajaran",
+                                  jps: schedJps,
+                                  startTime: startTimeStr,
+                                  endTime: endTimeStr,
+                                  scanned,
+                                  scanTime,
+                                  state: schedState,
+                                  reasonInactive:
+                                    todaySetting?.reasonInactive || "",
+                                };
+                              },
+                            );
+
+                            let teacherStatus:
+                              | "HIJAU"
+                              | "MERAH"
+                              | "STANDBY"
+                              | "ABU-ABU" = "ABU-ABU";
+                            let statusLabel = "Tidak Mengajar";
+
+                            const todayStatusRecord = teacherAttendance.find(
+                              (ta) =>
+                                ta.nip === teacher.nip &&
+                                ta.tanggal === todayDateStr &&
+                                ta.status,
+                            );
+
+                            if (todayStatusRecord) {
+                              teacherStatus = "ABU-ABU";
+                              statusLabel = todayStatusRecord.status;
+                            } else if (currentHoliday) {
+                              if (isTeachingToday) {
+                                teacherStatus = "ABU-ABU";
+                                statusLabel = `Hari Libur ${currentHoliday.keterangan}`;
+                              } else {
+                                teacherStatus = "ABU-ABU";
+                                statusLabel = "Tidak Mengajar";
+                              }
+                            } else if (isTeachingToday) {
+                              const nonInactiveDetails =
+                                teachDetailList.filter(
+                                  (dt) => dt.state !== "INACTIVE",
+                                );
+
+                              if (
+                                teachDetailList.length > 0 &&
+                                nonInactiveDetails.length === 0
+                              ) {
+                                teacherStatus = "ABU-ABU";
+                                statusLabel = todaySetting?.reasonInactive
+                                  ? `${todaySetting.reasonInactive}`
+                                  : "Mengikuti Kegiatan";
+                              } else {
+                                const quietActive = nonInactiveDetails.some(
+                                  (dt) => dt.state === "ACTIVE",
+                                );
+                                const quietStandby =
+                                  nonInactiveDetails.some(
+                                    (dt) => dt.state === "STANDBY",
+                                  );
+                                const quietAllPassed =
+                                  nonInactiveDetails.length > 0 &&
+                                  nonInactiveDetails.every(
+                                    (dt) => dt.state === "PASSED",
+                                  );
+
+                                if (quietAllPassed) {
+                                  teacherStatus = "ABU-ABU";
+                                  statusLabel = "Selesai Mengajar";
+                                } else if (quietActive) {
+                                  const activeClasses =
+                                    nonInactiveDetails.filter(
+                                      (dt) => dt.state === "ACTIVE",
+                                    );
+                                  const anyUnscannedActive =
+                                    activeClasses.some((dt) => !dt.scanned);
+
+                                  if (anyUnscannedActive) {
+                                    teacherStatus = "MERAH";
+                                    statusLabel = "Belum Scan";
+                                  } else {
+                                    teacherStatus = "HIJAU";
+                                    statusLabel = "Aktif Mengajar";
+                                  }
+                                } else if (quietStandby) {
+                                  teacherStatus = "STANDBY";
+                                  statusLabel = "Standby";
+                                } else {
+                                  teacherStatus = "ABU-ABU";
+                                  statusLabel = "Tidak Mengajar";
+                                }
+                              }
+                            }
+
+                            return {
+                              teacher,
+                              teacherSchedulesToday,
+                              isTeachingToday,
+                              teachDetailList,
+                              teacherStatus,
+                              statusLabel,
+                              todayStatusRecord,
+                            };
+                          },
+                        );
+
+                        const teachersTeachingToday = computedTeachers.filter(
+                          (item) => item.isTeachingToday,
                         );
                         const teachersNotTeachingToday =
-                          filteredTeachers.filter(
-                            (t) =>
-                              !teachingSchedules.some(
-                                (s) =>
-                                  s.nip === t.nip && s.hari === todayDayName,
-                              ),
+                          computedTeachers.filter(
+                            (item) => !item.isTeachingToday,
                           );
+
+                        const countAktif = teachersTeachingToday.filter(
+                          (item) => item.teacherStatus === "HIJAU",
+                        ).length;
+                        const countBelumScan = teachersTeachingToday.filter(
+                          (item) => item.teacherStatus === "MERAH",
+                        ).length;
+                        const countStandby = teachersTeachingToday.filter(
+                          (item) => item.teacherStatus === "STANDBY",
+                        ).length;
+                        const countSelesaiLainnya =
+                          teachersTeachingToday.filter(
+                            (item) => item.teacherStatus === "ABU-ABU",
+                          ).length;
+
+                        // Filter list based on selected filter
+                        const displayedTeacherItems =
+                          computedTeachers.filter((item) => {
+                            if (kamadStatusFilter === "aktif")
+                              return (
+                                item.isTeachingToday &&
+                                item.teacherStatus === "HIJAU"
+                              );
+                            if (kamadStatusFilter === "belum_scan")
+                              return (
+                                item.isTeachingToday &&
+                                item.teacherStatus === "MERAH"
+                              );
+                            if (kamadStatusFilter === "standby")
+                              return (
+                                item.isTeachingToday &&
+                                item.teacherStatus === "STANDBY"
+                              );
+                            if (kamadStatusFilter === "selesai")
+                              return (
+                                item.isTeachingToday &&
+                                item.teacherStatus === "ABU-ABU"
+                              );
+                            if (kamadStatusFilter === "tidak_mengajar")
+                              return !item.isTeachingToday;
+                            return true; // "all"
+                          });
 
                         return (
                           <div className="space-y-6">
                             {/* Summary Cards */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex items-center gap-4 shadow-xs">
-                                <div className="w-12 h-12 rounded-xl bg-emerald-500 flex items-center justify-center text-white shrink-0">
-                                  <BookOpen size={24} />
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                              {/* Main Card: Total Guru Mengajar + Breakdown */}
+                              <div className="lg:col-span-8 bg-gradient-to-br from-emerald-50/80 via-emerald-50/30 to-white border border-emerald-200/90 p-5 rounded-3xl shadow-xs space-y-4">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-100 pb-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-12 h-12 rounded-2xl bg-emerald-600 flex items-center justify-center text-white shrink-0 shadow-md shadow-emerald-200">
+                                      <BookOpen size={22} />
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest leading-none">
+                                        Total Guru Mengajar Hari Ini
+                                      </p>
+                                      <div className="flex items-baseline gap-2 mt-1">
+                                        <span className="text-3xl font-black text-emerald-950">
+                                          {teachersTeachingToday.length}
+                                        </span>
+                                        <span className="text-xs font-extrabold text-emerald-700 uppercase tracking-wider">
+                                          Guru Terjadwal
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {kamadStatusFilter !== "all" && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setKamadStatusFilter("all")
+                                      }
+                                      className="self-start sm:self-center bg-emerald-100 hover:bg-emerald-200 text-emerald-900 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <span>✕ Reset Filter</span>
+                                    </button>
+                                  )}
                                 </div>
-                                <div className="text-left">
-                                  <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest leading-none">
-                                    Total Guru Mengajar Hari Ini
+
+                                {/* Rincian Status Guru Mengajar */}
+                                <div>
+                                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2.5 flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                                    Rincian Status Guru Mengajar:
                                   </p>
-                                  <p className="text-2xl font-black text-emerald-950 mt-1">
-                                    {teachersTeachingToday.length}{" "}
-                                    <span className="text-xs font-bold text-emerald-600">
-                                      Guru
-                                    </span>
-                                  </p>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                    {/* 1. Aktif Mengajar */}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setKamadStatusFilter((prev) =>
+                                          prev === "aktif" ? "all" : "aktif",
+                                        )
+                                      }
+                                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                                        kamadStatusFilter === "aktif"
+                                          ? "bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-300"
+                                          : "bg-white hover:bg-emerald-50/50 text-emerald-950 border-emerald-200/90 shadow-2xs"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span
+                                          className={`text-[9px] font-black uppercase tracking-wider ${
+                                            kamadStatusFilter === "aktif"
+                                              ? "text-emerald-100"
+                                              : "text-emerald-800"
+                                          }`}
+                                        >
+                                          Aktif Mengajar
+                                        </span>
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                      </div>
+                                      <div className="flex items-baseline gap-1 mt-2">
+                                        <span className="text-xl font-black">
+                                          {countAktif}
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-bold ${
+                                            kamadStatusFilter === "aktif"
+                                              ? "text-emerald-200"
+                                              : "text-emerald-600"
+                                          }`}
+                                        >
+                                          Guru
+                                        </span>
+                                      </div>
+                                    </button>
+
+                                    {/* 2. Belum Scan */}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setKamadStatusFilter((prev) =>
+                                          prev === "belum_scan"
+                                            ? "all"
+                                            : "belum_scan",
+                                        )
+                                      }
+                                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                                        kamadStatusFilter === "belum_scan"
+                                          ? "bg-rose-700 text-white border-rose-800 shadow-md ring-2 ring-rose-300"
+                                          : "bg-white hover:bg-rose-50/50 text-rose-950 border-rose-200/90 shadow-2xs"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span
+                                          className={`text-[9px] font-black uppercase tracking-wider ${
+                                            kamadStatusFilter === "belum_scan"
+                                              ? "text-rose-100"
+                                              : "text-rose-800"
+                                          }`}
+                                        >
+                                          Belum Scan
+                                        </span>
+                                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping shrink-0" />
+                                      </div>
+                                      <div className="flex items-baseline gap-1 mt-2">
+                                        <span className="text-xl font-black">
+                                          {countBelumScan}
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-bold ${
+                                            kamadStatusFilter === "belum_scan"
+                                              ? "text-rose-200"
+                                              : "text-rose-600"
+                                          }`}
+                                        >
+                                          Guru
+                                        </span>
+                                      </div>
+                                    </button>
+
+                                    {/* 3. Standby */}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setKamadStatusFilter((prev) =>
+                                          prev === "standby"
+                                            ? "all"
+                                            : "standby",
+                                        )
+                                      }
+                                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                                        kamadStatusFilter === "standby"
+                                          ? "bg-amber-600 text-white border-amber-700 shadow-md ring-2 ring-amber-300"
+                                          : "bg-white hover:bg-amber-50/50 text-amber-950 border-amber-200/90 shadow-2xs"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span
+                                          className={`text-[9px] font-black uppercase tracking-wider ${
+                                            kamadStatusFilter === "standby"
+                                              ? "text-amber-100"
+                                              : "text-amber-800"
+                                          }`}
+                                        >
+                                          Standby
+                                        </span>
+                                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                      </div>
+                                      <div className="flex items-baseline gap-1 mt-2">
+                                        <span className="text-xl font-black">
+                                          {countStandby}
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-bold ${
+                                            kamadStatusFilter === "standby"
+                                              ? "text-amber-200"
+                                              : "text-amber-700"
+                                          }`}
+                                        >
+                                          Guru
+                                        </span>
+                                      </div>
+                                    </button>
+
+                                    {/* 4. Selesai / Lainnya */}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setKamadStatusFilter((prev) =>
+                                          prev === "selesai"
+                                            ? "all"
+                                            : "selesai",
+                                        )
+                                      }
+                                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                                        kamadStatusFilter === "selesai"
+                                          ? "bg-zinc-800 text-white border-zinc-900 shadow-md ring-2 ring-zinc-400"
+                                          : "bg-white hover:bg-zinc-50 text-zinc-900 border-zinc-200 shadow-2xs"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span
+                                          className={`text-[9px] font-black uppercase tracking-wider ${
+                                            kamadStatusFilter === "selesai"
+                                              ? "text-zinc-300"
+                                              : "text-zinc-500"
+                                          }`}
+                                        >
+                                          Selesai / Off
+                                        </span>
+                                        <span className="w-2 h-2 rounded-full bg-zinc-400 shrink-0" />
+                                      </div>
+                                      <div className="flex items-baseline gap-1 mt-2">
+                                        <span className="text-xl font-black">
+                                          {countSelesaiLainnya}
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-bold ${
+                                            kamadStatusFilter === "selesai"
+                                              ? "text-zinc-300"
+                                              : "text-zinc-500"
+                                          }`}
+                                        >
+                                          Guru
+                                        </span>
+                                      </div>
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
 
-                              <div className="bg-zinc-50 border border-zinc-200/80 p-4 rounded-2xl flex items-center gap-4 shadow-xs">
-                                <div className="w-12 h-12 rounded-xl bg-zinc-400 flex items-center justify-center text-white shrink-0">
-                                  <User size={24} />
+                              {/* Card 2: Guru Tidak Mengajar Hari Ini */}
+                              <div className="lg:col-span-4 bg-zinc-50 border border-zinc-200/80 p-5 rounded-3xl flex flex-col justify-between shadow-xs">
+                                <div className="flex items-start gap-4">
+                                  <div className="w-12 h-12 rounded-2xl bg-zinc-300 flex items-center justify-center text-zinc-700 shrink-0">
+                                    <User size={22} />
+                                  </div>
+                                  <div className="text-left">
+                                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none">
+                                      Guru Tidak Mengajar Hari Ini
+                                    </p>
+                                    <div className="flex items-baseline gap-2 mt-1">
+                                      <span className="text-3xl font-black text-zinc-950">
+                                        {teachersNotTeachingToday.length}
+                                      </span>
+                                      <span className="text-xs font-bold text-zinc-500">
+                                        Guru
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-zinc-500 font-medium mt-2 leading-snug">
+                                      Guru yang tidak memiliki jadwal mengajar
+                                      pada hari {todayDayName}.
+                                    </p>
+                                  </div>
                                 </div>
-                                <div className="text-left">
-                                  <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest leading-none">
-                                    Guru Tidak Mengajar Hari Ini
-                                  </p>
-                                  <p className="text-2xl font-black text-zinc-950 mt-1">
-                                    {teachersNotTeachingToday.length}{" "}
-                                    <span className="text-xs font-bold text-zinc-500">
-                                      Guru
-                                    </span>
-                                  </p>
-                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setKamadStatusFilter((prev) =>
+                                      prev === "tidak_mengajar"
+                                        ? "all"
+                                        : "tidak_mengajar",
+                                    )
+                                  }
+                                  className={`mt-4 w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                                    kamadStatusFilter === "tidak_mengajar"
+                                      ? "bg-zinc-900 text-white shadow-sm"
+                                      : "bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {kamadStatusFilter === "tidak_mengajar"
+                                    ? "Tampilkan Semua"
+                                    : "Lihat Guru Tidak Mengajar"}
+                                </button>
                               </div>
                             </div>
 
+                            {/* Active Filter Bar (If applied) */}
+                            {kamadStatusFilter !== "all" && (
+                              <div className="flex items-center justify-between bg-zinc-900 text-white px-4 py-2.5 rounded-2xl text-xs font-bold animate-fadeIn">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                                  <span>
+                                    Menampilkan:{" "}
+                                    <strong className="text-green-300 uppercase">
+                                      {kamadStatusFilter === "aktif"
+                                        ? "Guru Aktif Mengajar"
+                                        : kamadStatusFilter === "belum_scan"
+                                          ? "Guru Belum Scan Presensi"
+                                          : kamadStatusFilter === "standby"
+                                            ? "Guru Standby"
+                                            : kamadStatusFilter === "selesai"
+                                              ? "Guru Selesai Mengajar / Off"
+                                              : "Guru Tidak Mengajar"}
+                                    </strong>{" "}
+                                    ({displayedTeacherItems.length} Guru)
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setKamadStatusFilter("all")}
+                                  className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1 rounded-xl uppercase tracking-wider transition-colors"
+                                >
+                                  Tampilkan Semua
+                                </button>
+                              </div>
+                            )}
+
                             {/* Teachers Grid */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                              {filteredTeachers.map((teacher) => {
-                                // Check if teacher has teaching schedule for today
-                                const teacherSchedulesToday =
-                                  teachingSchedules.filter(
-                                    (s) =>
-                                      s.nip === teacher.nip &&
-                                      s.hari === todayDayName,
-                                  );
-                                const isTeachingToday =
-                                  teacherSchedulesToday.length > 0;
-
-                                const limitJp =
-                                  todayDayName === "Jumat" ? 6 : 8;
-
-                                const getJpStartEnd = (
-                                  jp: number,
-                                  jpTimesFromDb: any,
-                                  limit: number,
-                                ) => {
-                                  if (
-                                    jpTimesFromDb?.[jp]?.start &&
-                                    jpTimesFromDb?.[jp]?.end
-                                  ) {
-                                    return {
-                                      start: jpTimesFromDb[jp].start,
-                                      end: jpTimesFromDb[jp].end,
-                                    };
-                                  }
-                                  // Fallback to standard calculated JP times:
-                                  // Start KBM at 07:15. Each JP is 40 minutes.
-                                  // After JP 4 (i.e., before JP 5 is started), there's a 20-min break.
-                                  let startHour = 7;
-                                  let startMin = 15;
-                                  for (let i = 1; i < jp; i++) {
-                                    if (i === 4) {
-                                      startMin += 20; // 20 min break after JP 4
-                                    }
-                                    startMin += 40; // Add previous JP duration
-                                  }
-                                  // Normalize start
-                                  startHour += Math.floor(startMin / 60);
-                                  startMin = startMin % 60;
-
-                                  let endHour = startHour;
-                                  let endMin = startMin + 40;
-                                  endHour += Math.floor(endMin / 60);
-                                  endMin = endMin % 60;
-
-                                  return {
-                                    start: `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}`,
-                                    end: `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`,
-                                  };
-                                };
-
-                                const parseTimeToMinutes = (tStr: string) => {
-                                  if (!tStr) return 0;
-                                  const parts = tStr.split(":");
-                                  if (parts.length < 2) return 0;
-                                  return (
-                                    parseInt(parts[0]) * 60 + parseInt(parts[1])
-                                  );
-                                };
-
-                                const currentMin = parseTimeToMinutes(
-                                  currentTime || "00:00",
-                                );
-
-                                // Collect all classes & JP ranges where they teach today with exact active states
-                                const teachDetailList =
-                                  teacherSchedulesToday.map((sched) => {
-                                    const schedJps = sched.jps || [];
-                                    const minJp =
-                                      schedJps.length > 0
-                                        ? Math.min(...schedJps)
-                                        : 1;
-                                    const maxJp =
-                                      schedJps.length > 0
-                                        ? Math.max(...schedJps)
-                                        : 1;
-
-                                    const startJpTimes = getJpStartEnd(
-                                      minJp,
-                                      todaySetting?.jpTimes,
-                                      limitJp,
-                                    );
-                                    const endJpTimes = getJpStartEnd(
-                                      maxJp,
-                                      todaySetting?.jpTimes,
-                                      limitJp,
-                                    );
-
-                                    const startTimeStr = startJpTimes.start;
-                                    const endTimeStr = endJpTimes.end;
-
-                                    const startMin =
-                                      parseTimeToMinutes(startTimeStr);
-                                    const endMin =
-                                      parseTimeToMinutes(endTimeStr);
-
-                                    const attendanceRecord =
-                                      teacherAttendance.find(
-                                        (ta) =>
-                                          ta.nip === teacher.nip &&
-                                          ta.kelas === sched.kelas &&
-                                          ta.tanggal === todayDateStr,
-                                      );
-
-                                    const scanned = !!attendanceRecord;
-                                    const scanTime =
-                                      attendanceRecord?.jam || "";
-
-                                    // Check if this JP is inactive in today's settings
-                                    const activeJpsList =
-                                      todaySetting?.activeJps &&
-                                      Array.isArray(todaySetting.activeJps)
-                                        ? todaySetting.activeJps
-                                        : Array.from(
-                                            {
-                                              length:
-                                                todayDayName === "Jumat"
-                                                  ? 6
-                                                  : 8,
-                                            },
-                                            (_, i) => i + 1,
-                                          );
-
-                                    const isJpInactive = schedJps.some(
-                                      (jp) => !activeJpsList.includes(jp),
-                                    );
-
-                                    let schedState:
-                                      | "PASSED"
-                                      | "ACTIVE"
-                                      | "STANDBY"
-                                      | "INACTIVE" = "STANDBY";
-                                    if (isJpInactive) {
-                                      schedState = "INACTIVE";
-                                    } else if (currentMin < startMin) {
-                                      schedState = "STANDBY";
-                                    } else if (
-                                      currentMin >= startMin &&
-                                      currentMin <= endMin
-                                    ) {
-                                      schedState = "ACTIVE";
-                                    } else {
-                                      schedState = "PASSED";
-                                    }
-
-                                    return {
-                                      kelas: sched.kelas,
-                                      mapel: sched.mapel || "Mata Pelajaran",
-                                      jps: schedJps,
-                                      startTime: startTimeStr,
-                                      endTime: endTimeStr,
-                                      scanned,
-                                      scanTime,
-                                      state: schedState,
-                                      reasonInactive:
-                                        todaySetting?.reasonInactive || "",
-                                    };
-                                  });
-
-                                // Identify combined teacher status
-                                let teacherStatus:
-                                  | "HIJAU"
-                                  | "MERAH"
-                                  | "STANDBY"
-                                  | "ABU-ABU" = "ABU-ABU";
-                                let statusLabel = "Tidak Mengajar";
-
-                                const todayStatusRecord =
-                                  teacherAttendance.find(
-                                    (ta) =>
-                                      ta.nip === teacher.nip &&
-                                      ta.tanggal === todayDateStr &&
-                                      ta.status,
-                                  );
-
-                                if (todayStatusRecord) {
-                                  teacherStatus = "ABU-ABU";
-                                  statusLabel = todayStatusRecord.status; // 'Sakit' or 'Izin' or 'Alfa'
-                                } else if (currentHoliday) {
-                                  if (isTeachingToday) {
-                                    teacherStatus = "ABU-ABU";
-                                    statusLabel = `Hari Libur ${currentHoliday.keterangan}`;
-                                  } else {
-                                    teacherStatus = "ABU-ABU";
-                                    statusLabel = "Tidak Mengajar";
-                                  }
-                                } else if (isTeachingToday) {
-                                  const nonInactiveDetails =
-                                    teachDetailList.filter(
-                                      (dt) => dt.state !== "INACTIVE",
-                                    );
-
-                                  if (
-                                    teachDetailList.length > 0 &&
-                                    nonInactiveDetails.length === 0
-                                  ) {
-                                    teacherStatus = "ABU-ABU";
-                                    statusLabel = todaySetting?.reasonInactive
-                                      ? `${todaySetting.reasonInactive}`
-                                      : "Mengikuti Kegiatan";
-                                  } else {
-                                    const quietActive = nonInactiveDetails.some(
-                                      (dt) => dt.state === "ACTIVE",
-                                    );
-                                    const quietStandby =
-                                      nonInactiveDetails.some(
-                                        (dt) => dt.state === "STANDBY",
-                                      );
-                                    const quietAllPassed =
-                                      nonInactiveDetails.length > 0 &&
-                                      nonInactiveDetails.every(
-                                        (dt) => dt.state === "PASSED",
-                                      );
-
-                                    if (quietAllPassed) {
-                                      teacherStatus = "ABU-ABU";
-                                      statusLabel = "Selesai Mengajar";
-                                    } else if (quietActive) {
-                                      const activeClasses =
-                                        nonInactiveDetails.filter(
-                                          (dt) => dt.state === "ACTIVE",
-                                        );
-                                      const anyUnscannedActive =
-                                        activeClasses.some((dt) => !dt.scanned);
-
-                                      if (anyUnscannedActive) {
-                                        teacherStatus = "MERAH";
-                                        statusLabel = "Belum Scan";
-                                      } else {
-                                        teacherStatus = "HIJAU";
-                                        statusLabel = "Aktif Mengajar";
-                                      }
-                                    } else if (quietStandby) {
-                                      teacherStatus = "STANDBY";
-                                      statusLabel = "Standby";
-                                    } else {
-                                      teacherStatus = "ABU-ABU";
-                                      statusLabel = "Tidak Mengajar";
-                                    }
-                                  }
-                                }
+                            {displayedTeacherItems.length === 0 ? (
+                              <div className="py-12 text-center bg-zinc-50 rounded-3xl border border-dashed border-zinc-200">
+                                <p className="text-sm font-bold text-zinc-400">
+                                  Tidak ada guru yang sesuai dengan filter ini.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setKamadStatusFilter("all")}
+                                  className="mt-3 text-xs font-black text-green-700 hover:underline"
+                                >
+                                  Reset Filter
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {displayedTeacherItems.map((item) => {
+                                  const {
+                                    teacher,
+                                    teacherSchedulesToday,
+                                    isTeachingToday,
+                                    teachDetailList,
+                                    teacherStatus,
+                                    statusLabel,
+                                    todayStatusRecord,
+                                  } = item;
 
                                 // Visual Styling Setup
                                 let cardClass = "";
@@ -10252,6 +10617,7 @@ export default function App() {
                                 );
                               })}
                             </div>
+                           )}
                           </div>
                         );
                       })()}
@@ -13749,10 +14115,10 @@ export default function App() {
                         </button>
                         <button
                           onClick={async () => {
-                            const doc = new jsPDF("l", "mm", [330, 215]);
+                            const doc = new jsPDF("p", "mm", [215, 330]);
                             toggleLoader(true);
                             try {
-                              await addKopToDoc(doc, "l");
+                              await addKopToDoc(doc, "p");
                             } catch (e) {
                               console.error("Error adding KOP:", e);
                             } finally {
@@ -13760,18 +14126,19 @@ export default function App() {
                             }
 
                             doc.setFont("helvetica", "bold");
-                            doc.setFontSize(12);
+                            doc.setFontSize(11);
                             doc.text(
                               "REKAPITULASI MENGAJAR DAN PRESENSI MAPEL",
-                              14,
-                              35,
+                              107.5,
+                              32,
+                              { align: "center" }
                             );
                             doc.setFont("helvetica", "normal");
-                            doc.setFontSize(9);
+                            doc.setFontSize(8);
                             doc.text(
-                              `Bulan: ${rekapMapelFilter.bulan}`,
-                              14,
-                              41,
+                              `Bulan: ${rekapMapelFilter.bulan}${rekapMapelFilter.kelas ? ` | Kelas: ${rekapMapelFilter.kelas}` : ""}${rekapMapelFilter.mapel ? ` | Mapel: ${rekapMapelFilter.mapel}` : ""}`,
+                              10,
+                              37,
                             );
 
                             const tableData = filteredRecap.map((a, idx) => {
@@ -13793,8 +14160,24 @@ export default function App() {
                               ];
                             });
 
+                            // Calculate dynamic font size & cell padding so all rows fit on 1 single page (1 lembar portrait)
+                            const totalRows = filteredRecap.length + 1;
+                            let computedFontSize = 8.5;
+                            let computedPadding = 1.0;
+
+                            if (totalRows > 45) {
+                              computedFontSize = 7.0;
+                              computedPadding = 0.5;
+                            } else if (totalRows > 35) {
+                              computedFontSize = 7.5;
+                              computedPadding = 0.6;
+                            } else if (totalRows > 25) {
+                              computedFontSize = 8.0;
+                              computedPadding = 0.8;
+                            }
+
                             autoTable(doc, {
-                              startY: 46,
+                              startY: 41,
                               head: [
                                 [
                                   "No",
@@ -13809,13 +14192,29 @@ export default function App() {
                               ],
                               body: tableData,
                               theme: "striped",
+                              margin: { top: 41, bottom: 8, left: 10, right: 10 },
+                              styles: {
+                                fontSize: computedFontSize,
+                                cellPadding: computedPadding,
+                                valign: "middle",
+                              },
+                              columnStyles: {
+                                0: { cellWidth: 8, halign: "center" },
+                                1: { cellWidth: 16, halign: "center" },
+                                2: { cellWidth: 20, halign: "center" },
+                                3: { cellWidth: 45, halign: "left" },
+                                4: { cellWidth: 35, halign: "left" },
+                                5: { cellWidth: 14, halign: "center" },
+                                6: { cellWidth: 16, halign: "center" },
+                                7: { cellWidth: 22, halign: "center" },
+                              },
                             });
 
                             doc.save(
                               `Rekap_Mapel_${rekapMapelFilter.bulan}.pdf`,
                             );
                           }}
-                          className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all border border-red-100"
+                          className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all border border-red-100 cursor-pointer"
                         >
                           <FileText size={16} /> PDF
                         </button>
