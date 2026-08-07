@@ -79,10 +79,41 @@ export const firestoreService = {
   },
 
   // Auth Bridge
+  restoreActiveSession: async (session: UserSession): Promise<boolean> => {
+    try {
+      await firestoreService.ensureAuth();
+      if (!auth.currentUser || !session) return false;
+
+      if (session.role === 'Siswa') {
+        const cleanId = (session.uid || "").replace(/^'|'$/g, "").trim();
+        await setDoc(doc(db, 'activeSessions', auth.currentUser.uid), {
+          uid: auth.currentUser.uid,
+          nisn: cleanId,
+          role: 'Siswa'
+        });
+        return true;
+      } else if ((session.role === 'Guru' || session.role === 'Admin') && session.pass) {
+        await setDoc(doc(db, 'activeSessions', auth.currentUser.uid), {
+          uid: auth.currentUser.uid,
+          nip: session.uid,
+          pass: session.pass,
+          role: session.role
+        });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn("[Auth] restoreActiveSession failed:", e);
+      return false;
+    }
+  },
+
   checkLogin: async (identifier: string, p: string, r: Role): Promise<UserSession> => {
     try {
       // Ensure we are signed in anonymously first
       await firestoreService.ensureAuth();
+
+      const cleanPassword = (p || "").trim();
 
       if (r === 'Siswa') {
         if (!auth.currentUser) {
@@ -125,11 +156,20 @@ export const firestoreService = {
         const data = studentDocSnap.data() as Student;
         // Pastikan NISN disesuaikan dengan ID dokumen
         data.nisn = studentDocSnap.id;
-
         return { success: true, name: data.nama, role: 'Siswa', uid: data.nisn, kelas: data.kelas, isWali: false };
       } else {
         const cleanId = identifier.replace(/^'|'$/g, "").trim();
-        const possibleIds = [cleanId, "'" + cleanId];
+        const rawLower = cleanId.toLowerCase();
+        const rawUpper = cleanId.toUpperCase();
+        
+        const possibleIds = Array.from(new Set([
+          cleanId,
+          rawLower,
+          rawUpper,
+          "'" + cleanId,
+          "'" + rawLower,
+          "'" + rawUpper
+        ]));
         
         const candidates: Array<{ nip: string; data: Teacher }> = [];
 
@@ -160,6 +200,28 @@ export const firestoreService = {
           }
         }
 
+        // Fallback: search teacher collection case-insensitively if direct matches failed (e.g. mobile auto-capitalization/spaces)
+        if (candidates.length === 0) {
+          try {
+            const allTeachersSnap = await getDocs(collection(db, 'teachers'));
+            allTeachersSnap.docs.forEach((docSnap) => {
+              const tData = docSnap.data() as Teacher;
+              const uLower = (tData.user || "").trim().toLowerCase();
+              const nipLower = (docSnap.id || "").trim().toLowerCase();
+              const nameLower = (tData.nama || "").trim().toLowerCase();
+              const targetLower = cleanId.toLowerCase();
+
+              if (uLower === targetLower || nipLower === targetLower || nameLower === targetLower) {
+                if (!candidates.some(c => c.nip === docSnap.id)) {
+                  candidates.push({ nip: docSnap.id, data: tData });
+                }
+              }
+            });
+          } catch (err) {
+            console.warn("[Auth] Teacher collection fallback check skipped:", err);
+          }
+        }
+
         if (candidates.length === 0) {
           return { success: false, message: "Username atau Password salah.", role: 'Guru', name: '', uid: '', kelas: '', isWali: false };
         }
@@ -170,14 +232,18 @@ export const firestoreService = {
 
         for (const candidate of candidates) {
           let passMatched = false;
-          
-          if (candidate.data.pass === p) {
+          const candidatePass = candidate.data.pass;
+
+          if (candidatePass === p || candidatePass === cleanPassword) {
             passMatched = true;
           } else {
             try {
               const passSnap = await getDoc(doc(db, 'teachers', candidate.nip, 'private', 'password'));
-              if (passSnap.exists() && passSnap.data().pass === p) {
-                passMatched = true;
+              if (passSnap.exists()) {
+                const storedPass = passSnap.data().pass;
+                if (storedPass === p || storedPass === cleanPassword) {
+                  passMatched = true;
+                }
               }
             } catch (err) {
               console.warn(`[Auth] Private password fetch error for ${candidate.nip}:`, err);
@@ -209,7 +275,7 @@ export const firestoreService = {
             await setDoc(doc(db, 'activeSessions', auth.currentUser.uid), {
               uid: auth.currentUser.uid,
               nip: finalNip,
-              pass: p,
+              pass: cleanPassword || p,
               role: data.role
             });
           } catch (sessionErr: any) {
@@ -226,7 +292,7 @@ export const firestoreService = {
           kelas: data.kelas,
           isWali: !!data.kelas,
           jabatan: data.jabatan,
-          pass: p
+          pass: cleanPassword || p
         };
       }
     } catch (e: any) {

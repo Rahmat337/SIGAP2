@@ -677,7 +677,27 @@ export default function App() {
       return JSON.parse(localStorage.getItem("sigap_cache_holidays") || "[]");
     } catch { return []; }
   });
-  const [session, setSession] = useState<UserSession | null>(null);
+  const [session, setSession] = useState<UserSession | null>(() => {
+    try {
+      const saved = localStorage.getItem("sigap_session");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (session) {
+      try {
+        localStorage.setItem("sigap_session", JSON.stringify(session));
+      } catch (e) {
+        console.warn("Failed to save session to localStorage", e);
+      }
+      firestoreService.restoreActiveSession(session);
+    } else {
+      localStorage.removeItem("sigap_session");
+    }
+  }, [session]);
 
   const [masterDataVersion, setMasterDataVersion] = useState(0);
   const refreshMasterData = useCallback(() => {
@@ -5847,8 +5867,8 @@ export default function App() {
   };
 
   const handleLogin = async () => {
-    const u = loginRole === "Siswa" ? loginNisn : loginUser;
-    const p = loginRole === "Siswa" ? "" : loginPass;
+    const u = (loginRole === "Siswa" ? loginNisn : loginUser).trim();
+    const p = (loginRole === "Siswa" ? "" : loginPass).trim();
 
     if (!u || (loginRole !== "Siswa" && !p)) {
       const msg =
@@ -6341,6 +6361,10 @@ export default function App() {
                     setLoginNisn(e.target.value);
                     setLoginError("");
                   }}
+                  autoCapitalize="none"
+                  autoComplete="username"
+                  autoCorrect="off"
+                  spellCheck={false}
                   className="w-full bg-gray-50 border-0 rounded-xl py-3 px-4 focus:ring-2 focus:ring-green-500 transition-all font-medium disabled:opacity-50"
                   placeholder="Masukkan NISN"
                 />
@@ -6359,6 +6383,10 @@ export default function App() {
                       setLoginUser(e.target.value);
                       setLoginError("");
                     }}
+                    autoCapitalize="none"
+                    autoComplete="username"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="w-full bg-gray-50 border-0 rounded-xl py-3 px-4 focus:ring-2 focus:ring-green-500 transition-all font-medium disabled:opacity-50"
                     placeholder="Username"
                   />
@@ -6376,6 +6404,10 @@ export default function App() {
                         setLoginPass(e.target.value);
                         setLoginError("");
                       }}
+                      autoCapitalize="none"
+                      autoComplete="current-password"
+                      autoCorrect="off"
+                      spellCheck={false}
                       className="w-full bg-gray-50 border-0 rounded-xl py-3 px-4 focus:ring-2 focus:ring-green-500 transition-all font-medium disabled:opacity-50"
                       placeholder="••••••••"
                     />
